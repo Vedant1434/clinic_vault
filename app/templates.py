@@ -1,480 +1,484 @@
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, DictLoader
 
-# --- CSS & Layout Constants ---
-HEAD_CONTENT = """
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClinicVault | Enterprise Health System</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <style>
-        :root { --primary: #0d6efd; --secure: #198754; --admin: #6610f2; --bg: #f8f9fa; }
-        body { background-color: var(--bg); font-family: 'Segoe UI', system-ui, sans-serif; }
-        .navbar { background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .secure-badge { background: #e8f5e9; color: #1b5e20; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; border: 1px solid #c8e6c9; }
+# Storing templates in a dictionary for portability
+HTML_TEMPLATES = {
+    "base": """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>ClinicVault | Enterprise Health System</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+        <style>
+            :root { --primary: #0d6efd; --secure: #198754; --admin: #6610f2; --bg: #f8f9fa; }
+            body { background-color: var(--bg); font-family: 'Segoe UI', system-ui, sans-serif; }
+            .navbar { background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+            .secure-badge { background: #e8f5e9; color: #1b5e20; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; border: 1px solid #c8e6c9; }
+            .admin-badge { background: #f3e5f5; color: #4a148c; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; border: 1px solid #e1bee7; }
+            .timeline-item { border-left: 2px solid #dee2e6; padding-left: 20px; padding-bottom: 20px; position: relative; }
+            .timeline-item::before { content: ''; position: absolute; left: -6px; top: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--primary); }
+            .timeline-date { font-size: 0.85em; color: #6c757d; }
+            .card { border: none; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border-radius: 8px; }
+            
+            /* Video Chat Styles */
+            .video-container { position: relative; width: 100%; height: 400px; background: #000; border-radius: 8px; overflow: hidden; }
+            video { width: 100%; height: 100%; object-fit: cover; }
+            #localVideo { position: absolute; bottom: 20px; right: 20px; width: 120px; height: 90px; border: 2px solid white; border-radius: 4px; z-index: 10; }
+            
+            /* Transcript Overlay */
+            #transcriptOverlay {
+                position: absolute;
+                bottom: 80px; /* Moved up slightly */
+                left: 50%;
+                transform: translateX(-50%);
+                width: 80%;
+                text-align: center;
+                color: #fff;
+                background: rgba(0, 0, 0, 0.7);
+                padding: 12px;
+                border-radius: 20px;
+                font-size: 1.2em;
+                font-weight: 500;
+                display: none;
+                z-index: 20;
+                pointer-events: none;
+                transition: opacity 0.3s ease-in-out;
+                text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+            }
+            .transcript-badge { font-size: 0.75em; background: #e3f2fd; color: #0d47a1; padding: 2px 6px; border-radius: 4px; margin-right: 5px; }
+        </style>
+    </head>
+    <body>
+        <nav class="navbar navbar-expand-lg navbar-light mb-4">
+            <div class="container">
+                <a class="navbar-brand fw-bold" href="/">
+                    <i class="fas fa-hospital-user text-primary"></i> ClinicVault <small class="text-muted fw-light">Enterprise</small>
+                </a>
+                <div class="d-flex align-items-center">
+                    {% if user %}
+                        <span class="me-3 text-muted">
+                            {{ user.full_name }} 
+                            {% if user.role == 'admin' %}
+                                <span class="badge bg-primary">SUPERVISOR</span>
+                            {% elif user.role == 'doctor' %}
+                                <span class="badge bg-success">DOCTOR</span>
+                            {% endif %}
+                        </span>
+                        <a href="/logout" class="btn btn-outline-secondary btn-sm">Logout</a>
+                    {% endif %}
+                </div>
+            </div>
+        </nav>
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    </body>
+    </html>
+    """,
+    "login": """{% extends "base" %}
+    {% block content %}
+    <div class="row justify-content-center mt-5">
+        <div class="col-md-5">
+            <div class="card p-4">
+                <h3 class="text-center mb-4">Hospital Portal</h3>
+                <form action="/auth/login" method="post">
+                    <div class="mb-3"><label>Email Address</label><input type="email" name="username" class="form-control" required></div>
+                    <div class="mb-3"><label>Password</label><input type="password" name="password" class="form-control" required></div>
+                    <button type="submit" class="btn btn-primary w-100 mb-2">Secure Login</button>
+                </form>
+                <div class="text-center mt-3"><a href="/register" class="text-decoration-none">New Patient? Register Here</a></div>
+                <hr>
+                <div class="d-grid gap-2"><form action="/auth/seed" method="post"><button class="btn btn-outline-secondary btn-sm w-100">Initialize Demo Data</button></form></div>
+            </div>
+        </div>
+    </div>
+    {% endblock %}""",
+    "register": """{% extends "base" %}
+    {% block content %}
+    <div class="row justify-content-center mt-5">
+        <div class="col-md-5">
+            <div class="card p-4">
+                <h3 class="text-center mb-4">Patient Registration</h3>
+                <form action="/auth/register" method="post">
+                    <div class="mb-3"><label>Full Name</label><input type="text" name="full_name" class="form-control" required></div>
+                    <div class="mb-3"><label>Email Address</label><input type="email" name="email" class="form-control" required></div>
+                    <div class="mb-3"><label>Password</label><input type="password" name="password" class="form-control" required></div>
+                    <button type="submit" class="btn btn-success w-100 mb-2">Create Record</button>
+                </form>
+                <div class="text-center mt-3"><a href="/" class="text-decoration-none">Already have an account? Login</a></div>
+            </div>
+        </div>
+    </div>
+    {% endblock %}""",
+    "dashboard_admin": """{% extends "base" %}
+    {% block content %}
+    <div class="row">
+        <div class="col-md-12 mb-4">
+            <div class="card border-primary">
+                <div class="card-header bg-primary text-white d-flex justify-content-between"><h5 class="mb-0">Supervisor Dashboard</h5><span><i class="fas fa-user-shield"></i> Admin Access</span></div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <h6>Add New Doctor</h6>
+                            <form action="/admin/add_doctor" method="post" class="border p-3 rounded bg-light">
+                                <div class="mb-2"><input type="text" name="full_name" class="form-control form-control-sm" placeholder="Dr. Name" required></div>
+                                <div class="mb-2"><input type="email" name="email" class="form-control form-control-sm" placeholder="Email" required></div>
+                                <div class="mb-2"><input type="password" name="password" class="form-control form-control-sm" placeholder="Password" required></div>
+                                <div class="mb-2"><select name="specialty" class="form-select form-select-sm"><option value="Cardiology">Cardiology</option><option value="Dermatology">Dermatology</option><option value="General">General Practice</option></select></div>
+                                <button class="btn btn-primary btn-sm w-100">Onboard Doctor</button>
+                            </form>
+                        </div>
+                        <div class="col-md-8">
+                            <h6>Medical Staff Status</h6>
+                            <table class="table table-sm table-hover">
+                                <thead><tr><th>Name</th><th>Specialty</th><th>Status</th></tr></thead>
+                                <tbody>{% for doc in doctors %}<tr><td>{{ doc.full_name }}</td><td>{{ doc.specialty }}</td><td><span class="badge {% if doc.status == 'online' %}bg-success{% elif doc.status == 'busy' %}bg-danger{% else %}bg-secondary{% endif %}">{{ doc.status | upper }}</span></td></tr>{% endfor %}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-white"><h5 class="mb-0"><i class="fas fa-history"></i> System-Wide Privacy Log</h5></div>
+                <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                    <table class="table table-striped table-sm text-small">
+                        <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Purpose</th></tr></thead>
+                        <tbody>{% for log in logs %}<tr><td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td><td>{{ log.actor_name }}</td><td>{{ log.action }}</td><td>{{ log.target_data }}</td><td>{{ log.purpose }}</td></tr>{% endfor %}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endblock %}""",
+    "dashboard_patient": """{% extends "base" %}
+    {% block content %}
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card mb-4">
+                <div class="card-header bg-white d-flex justify-content-between"><h5 class="mb-0">Patient Triage</h5><span class="secure-badge"><i class="fas fa-shield-alt"></i> HIPAA Compliant</span></div>
+                <div class="card-body">
+                    {% if active_consultation %}
+                        <div class="alert alert-info">
+                            <h5><i class="fas fa-user-md"></i> Consultation #{{ active_consultation.id }}</h5>
+                            <p><strong>Status:</strong> {{ active_consultation.status | upper }}</p>
+                            <p><strong>Specialty:</strong> {{ active_consultation.specialty }}</p>
+                            {% if active_consultation.status == 'pending_payment' %}<a href="/billing/{{ active_consultation.id }}" class="btn btn-warning w-100">Proceed to Billing Counter</a>{% elif active_consultation.status == 'active' %}<a href="/consultation/{{ active_consultation.id }}" class="btn btn-success w-100">Enter Consultation Room</a>{% endif %}
+                        </div>
+                    {% else %}
+                        <h6>Start New Triage</h6>
+                        <form action="/triage/start" method="post">
+                            <div class="mb-3"><label>Select Required Specialty</label><select name="specialty" class="form-select"><option value="General">General Practice</option><option value="Cardiology">Cardiology</option><option value="Dermatology">Dermatology</option></select></div>
+                            <div class="mb-3"><label>Describe Symptoms</label><textarea name="symptoms" class="form-control" rows="3" required></textarea><small class="text-muted"><i class="fas fa-lock"></i> Encrypted at rest.</small></div>
+                            <button class="btn btn-primary">Find Available Doctor</button>
+                        </form>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-white"><h5 class="mb-0"><i class="fas fa-history"></i> My Privacy Timeline</h5></div>
+                <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                    {% for log in logs %}<div class="timeline-item"><div class="timeline-date">{{ log.timestamp.strftime('%H:%M:%S') }}</div><strong>{{ log.actor_name }}</strong><div>{{ log.action }}</div><div class="small text-muted">Target: {{ log.target_data }}</div><div class="small text-info fst-italic">Purpose: {{ log.purpose }}</div></div>{% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endblock %}""",
+    "dashboard_doctor": """{% extends "base" %}
+    {% block content %}
+    <div class="row">
+        <div class="col-md-12 mb-4"><div class="card"><div class="card-body d-flex justify-content-between align-items-center"><div><h4 class="mb-0">Dr. {{ user.full_name }}</h4><span class="badge bg-secondary">{{ user.specialty }}</span></div><div><span class="me-2">Current Status: <strong class="{% if user.status == 'online' %}text-success{% elif user.status == 'busy' %}text-danger{% else %}text-muted{% endif %}">{{ user.status | upper }}</strong></span><a href="/doctor/toggle_status" class="btn btn-outline-primary btn-sm">Toggle Online/Offline</a></div></div></div></div>
+    </div>
+    <h4>Assigned Patients</h4>
+    <div class="row">
+        {% for consult in consultations %}<div class="col-md-6"><div class="card mb-3"><div class="card-body"><h5 class="card-title">Patient #{{ consult.patient_id }}</h5><p class="card-text">Status: <strong>{{ consult.status }}</strong></p>{% if consult.status == 'active' %}<a href="/consultation/{{ consult.id }}" class="btn btn-success">Enter Consultation Room</a>{% else %}<span class="text-muted">Waiting for Payment/Triage</span>{% endif %}</div></div></div>{% else %}<div class="col-12"><p class="text-muted">No active assignments. Go 'Online' to receive patients.</p></div>{% endfor %}
+    </div>
+    {% endblock %}""",
+    "billing": """{% extends "base" %}
+    {% block content %}
+    <div class="row justify-content-center"><div class="col-md-6"><div class="card border-warning"><div class="card-header bg-warning text-dark"><h5 class="mb-0"><i class="fas fa-file-invoice-dollar"></i> Hospital Billing Counter</h5></div><div class="card-body text-center"><h3>Amount Due: ₹500.00</h3><p class="text-muted">Consultation ID: #{{ consultation.id }}</p><p>Doctor Assigned: <strong>{{ doctor_name }}</strong></p><hr><div class="d-flex gap-2 justify-content-center"><form action="/billing/process" method="post"><input type="hidden" name="consultation_id" value="{{ consultation.id }}"><input type="hidden" name="outcome" value="success"><button class="btn btn-success btn-lg">Simulate Success</button></form><form action="/billing/process" method="post"><input type="hidden" name="consultation_id" value="{{ consultation.id }}"><input type="hidden" name="outcome" value="fail"><button class="btn btn-danger btn-lg">Simulate Failure</button></form></div></div></div></div></div>
+    {% endblock %}""",
+    "consultation": """{% extends "base" %}
+    {% block content %}
+    <div class="row">
+        <div class="col-md-8">
+            <!-- WebRTC Video Container -->
+            <div class="card mb-3 bg-dark text-white video-container">
+                <video id="remoteVideo" autoplay playsinline></video>
+                <video id="localVideo" autoplay playsinline muted></video>
+                <div id="transcriptOverlay"></div> <!-- Transcript Overlay -->
+                
+                <div class="position-absolute bottom-0 start-0 p-3" style="width: 100%; z-index: 30;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <span class="badge bg-danger animate-pulse"><i class="fas fa-circle"></i> Encrypted Live Feed</span>
+                            <button id="startCallBtn" class="btn btn-success btn-sm ms-2">Start Video Call</button>
+                        </div>
+                        <button id="recordBtn" class="btn btn-outline-light btn-sm"><i class="fas fa-microphone"></i> Start Transcription</button>
+                    </div>
+                </div>
+            </div>
+            
+            {% if user.role == 'doctor' %}
+            <div class="card">
+                <div class="card-header d-flex justify-content-between">
+                    <span>Medical Notes (Encrypted Storage)</span>
+                </div>
+                <div class="card-body">
+                    <form action="/consultation/notes" method="post">
+                        <input type="hidden" name="consultation_id" value="{{ consultation.id }}">
+                        <textarea name="notes" class="form-control mb-2" rows="4" placeholder="Type clinical notes here..."></textarea>
+                        <button class="btn btn-primary btn-sm">Save & Encrypt</button>
+                    </form>
+                    <hr>
+                    <a href="/consultation/end/{{ consultation.id }}" class="btn btn-outline-danger w-100">End Session</a>
+                </div>
+            </div>
+            {% else %}
+            <!-- Patient View: Just Leave Button -->
+            <div class="card">
+                 <div class="card-body">
+                    <p class="text-muted">You are in a secure session with your doctor.</p>
+                    <a href="/dashboard" class="btn btn-outline-secondary w-100">Leave Room</a>
+                 </div>
+            </div>
+            {% endif %}
+        </div>
         
-        /* Video Container */
-        .video-wrapper { position: relative; background: #000; border-radius: 12px; overflow: hidden; height: 500px; }
-        video { width: 100%; height: 100%; object-fit: cover; }
-        #localVideo { position: absolute; bottom: 20px; right: 20px; width: 160px; height: 120px; border: 2px solid white; border-radius: 8px; z-index: 10; background: #333; }
-        
-        /* Controls Overlay */
-        .video-controls {
-            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-            background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 30px;
-            display: flex; gap: 15px; z-index: 20;
-        }
-        .control-btn { 
-            width: 45px; height: 45px; border-radius: 50%; border: none; 
-            display: flex; align-items: center; justify-content: center; font-size: 1.2rem;
-            transition: all 0.2s; color: white; background: #444;
-        }
-        .control-btn:hover { background: #666; }
-        .control-btn.active { background: #dc3545; color: white; }
-        .control-btn.recording { background: #dc3545; animation: pulse 1.5s infinite; }
+        <div class="col-md-4">
+            <!-- Patient Data -->
+            <div class="card mb-3">
+                <div class="card-header bg-info text-white">Current Patient Data</div>
+                <div class="card-body">
+                    <h6>Symptoms (Decrypted):</h6>
+                    <p class="alert alert-secondary">{{ symptoms_decrypted }}</p>
+                    <small class="text-muted d-block mb-2"><i class="fas fa-eye"></i> Decrypted for: {{ user.full_name }}</small>
+                </div>
+            </div>
 
-        /* Transcript Overlay */
-        #transcriptContainer {
-            position: absolute; top: 20px; left: 20px; right: 20px;
-            pointer-events: none; z-index: 15;
-            display: flex; flex-direction: column; align-items: center;
-        }
-        .transcript-bubble {
-            background: rgba(0,0,0,0.7); color: white; padding: 10px 20px;
-            border-radius: 20px; margin-bottom: 10px; max-width: 80%;
-            animation: fadeIn 0.3s ease; text-align: center;
-            backdrop-filter: blur(4px);
-        }
+            <!-- Chat & Transcript -->
+            <div class="card mb-3" style="height: 300px;">
+                <div class="card-header">Live Chat & Transcription</div>
+                <div class="card-body bg-light" id="chat-box" style="overflow-y: auto;">
+                    <div class="text-muted small text-center">System: Secure channel established.</div>
+                </div>
+                <div class="card-footer">
+                    <input type="text" id="msg-input" class="form-control form-control-sm" placeholder="Type message...">
+                </div>
+            </div>
 
-        /* Separate Chat/Transcript Tabs */
-        .chat-container { height: 400px; display: flex; flex-direction: column; }
-        .chat-messages { flex-grow: 1; overflow-y: auto; padding: 10px; background: #f8f9fa; }
-        .msg { padding: 8px 12px; margin-bottom: 8px; border-radius: 8px; max-width: 85%; font-size: 0.95rem; }
-        .msg.user { background: #e3f2fd; align-self: flex-end; margin-left: auto; }
-        .msg.peer { background: white; border: 1px solid #dee2e6; align-self: flex-start; }
-        .msg.system { background: #fff3cd; color: #856404; text-align: center; width: 100%; font-size: 0.8rem; }
-        
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
-    </style>
-</head>
-"""
-
-NAVBAR_CONTENT = """
-<nav class="navbar navbar-expand-lg navbar-light mb-4">
-    <div class="container">
-        <a class="navbar-brand fw-bold" href="/">
-            <i class="fas fa-hospital-user text-primary"></i> ClinicVault <small class="text-muted fw-light">v2.0</small>
-        </a>
-        <div class="d-flex align-items-center">
-            {% if user %}
-                <span class="me-3 text-muted">
-                    {{ user.full_name }} 
-                    <span class="badge bg-secondary ms-1">{{ user.role | upper }}</span>
-                </span>
-                <a href="/logout" class="btn btn-outline-secondary btn-sm">Logout</a>
+            <!-- History Sidebar (Doctor Only) -->
+            {% if history %}
+            <div class="card">
+                <div class="card-header bg-secondary text-white">Patient History</div>
+                <div class="card-body p-0" style="max-height: 200px; overflow-y: auto;">
+                    <ul class="list-group list-group-flush">
+                        {% for h in history %}
+                        <li class="list-group-item">
+                            <small class="fw-bold">{{ h.date }} - {{ h.specialty }}</small><br>
+                            <small class="text-muted">Dr. {{ h.doctor }}</small>
+                            <div class="mt-1 small fst-italic border-start border-primary ps-2">{{ h.notes }}</div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
             {% endif %}
         </div>
     </div>
-</nav>
-"""
 
-# --- Page Templates ---
-BASE_TEMPLATE = f"""
-<!DOCTYPE html>
-<html lang="en">
-{HEAD_CONTENT}
-<body>
-    {NAVBAR_CONTENT}
-    <div class="container">
-        {{% block content %}}{{% endblock %}}
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    
-    <!-- Global Toast Container -->
-    <div class="toast-container position-fixed bottom-0 end-0 p-3">
-        <div id="liveToast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
-            <div class="toast-header">
-                <strong class="me-auto">Notification</strong>
-                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
-            </div>
-            <div class="toast-body" id="toastMessage"></div>
-        </div>
-    </div>
+    <!-- WebRTC & Socket Logic -->
     <script>
-        function showToast(msg) {{
-            document.getElementById('toastMessage').innerText = msg;
-            const toast = new bootstrap.Toast(document.getElementById('liveToast'));
-            toast.show();
-        }}
-    </script>
-</body>
-</html>
-"""
-
-CONSULTATION_TEMPLATE = """
-{% extends "base" %}
-{% block content %}
-<div class="row">
-    <!-- Main Video Stage -->
-    <div class="col-lg-8 mb-4">
-        <div class="video-wrapper shadow-sm">
-            <video id="remoteVideo" autoplay playsinline></video>
-            <video id="localVideo" autoplay playsinline muted></video>
-            
-            <!-- Floating Transcripts -->
-            <div id="transcriptContainer"></div>
-            
-            <!-- Controls -->
-            <div class="video-controls">
-                <button class="control-btn" id="btnToggleAudio" title="Mute/Unmute"><i class="fas fa-microphone"></i></button>
-                <button class="control-btn" id="btnToggleVideo" title="Start/Stop Video"><i class="fas fa-video"></i></button>
-                <button class="control-btn" id="btnToggleTranscript" title="Show/Hide Captions"><i class="fas fa-closed-captioning"></i></button>
-                <div style="width:1px; background:#666; height:30px;"></div>
-                <button class="control-btn" id="btnRecord" title="Start Transcription"><i class="fas fa-wave-square"></i></button>
-                <a href="/consultation/end/{{ consultation.id }}" class="control-btn" style="background: #dc3545;" title="End Call"><i class="fas fa-phone-slash"></i></a>
-            </div>
-        </div>
+        const consultId = "{{ consultation.id }}";
+        const userId = "{{ user.id }}";
+        const wsUrl = "ws://" + window.location.host + "/ws/" + consultId + "/" + userId;
+        const ws = new WebSocket(wsUrl);
         
-        <!-- Doctor Tools -->
-        {% if user.role == 'doctor' %}
-        <div class="card mt-3">
-            <div class="card-body">
-                <h6 class="card-title"><i class="fas fa-notes-medical"></i> Clinical Notes (Private)</h6>
-                <form action="/consultation/notes" method="post">
-                    <input type="hidden" name="consultation_id" value="{{ consultation.id }}">
-                    <div class="input-group">
-                        <textarea name="notes" class="form-control" rows="2" placeholder="Private observations..."></textarea>
-                        <button class="btn btn-primary">Save Encrypted</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-        {% endif %}
-    </div>
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const chatBox = document.getElementById('chat-box');
+        const transcriptOverlay = document.getElementById('transcriptOverlay');
+        let transcriptTimeout;
 
-    <!-- Sidebar -->
-    <div class="col-lg-4">
-        <!-- Patient Info -->
-        <div class="card mb-3">
-            <div class="card-header bg-light"><strong>Patient Data</strong></div>
-            <div class="card-body">
-                <small class="text-muted">Symptoms:</small>
-                <div class="alert alert-light border">{{ symptoms_decrypted }}</div>
-            </div>
-        </div>
+        // WebRTC Config
+        const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+        let peerConnection;
+        let localStream;
 
-        <!-- Chat Area -->
-        <div class="card chat-container mb-3">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <span><i class="fas fa-comments"></i> Live Chat</span>
-                <span class="badge bg-success" id="connectionStatus">Connected</span>
-            </div>
-            <div class="chat-messages d-flex flex-column" id="chatBox">
-                <div class="msg system">Secure channel established.</div>
-            </div>
-            <div class="card-footer bg-white">
-                <input type="text" id="msgInput" class="form-control" placeholder="Type a message...">
-            </div>
-        </div>
-        
-        <!-- History (Only visible to Doctors) -->
-        {% if user.role == 'doctor' and history %}
-        <div class="card">
-            <div class="card-header bg-info text-white"><i class="fas fa-history"></i> Patient History</div>
-            <div class="list-group list-group-flush" style="max-height: 200px; overflow-y: auto;">
-                {% for h in history %}
-                <div class="list-group-item">
-                    <div class="d-flex justify-content-between">
-                        <small class="fw-bold">{{ h.date }}</small>
-                        <small class="text-muted">{{ h.specialty }}</small>
-                    </div>
-                    <small class="text-muted fst-italic">Dr. {{ h.doctor_name }}</small>
-                    <p class="mb-0 small mt-1">{{ h.notes }}</p>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-    </div>
-</div>
-
-<script>
-    const consultId = "{{ consultation.id }}";
-    const userId = "{{ user.id }}";
-    const userName = "{{ user.full_name }}";
-    const wsUrl = "ws://" + window.location.host + "/ws/" + consultId + "/" + userId;
-    let ws = new WebSocket(wsUrl);
-    
-    // UI Elements
-    const localVideo = document.getElementById('localVideo');
-    const remoteVideo = document.getElementById('remoteVideo');
-    const chatBox = document.getElementById('chatBox');
-    const transcriptContainer = document.getElementById('transcriptContainer');
-    
-    // State
-    let localStream;
-    let peerConnection;
-    let showCaptions = false;
-    let isRecording = false;
-    let recorderStream;
-    
-    // WebRTC Config
-    const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
-
-    // --- WebSocket Logic ---
-    ws.onmessage = async (event) => {
-        try {
-            const msg = JSON.parse(event.data);
-            
-            if (msg.type === "transcript") {
-                if (showCaptions) showFloatingTranscript(msg.text);
+        // --- WebSocket Handling ---
+        ws.onmessage = async function(event) {
+            try {
+                const msg = JSON.parse(event.data);
+                
+                if (msg.type === "transcript") {
+                    // Show in Video Overlay
+                    transcriptOverlay.textContent = msg.text;
+                    transcriptOverlay.style.display = 'block';
+                    
+                    // Show in Chat but styled differently
+                    addMessage("Transcript", msg.text, "transcript-badge");
+                    
+                    // Clear overlay after 4 seconds
+                    clearTimeout(transcriptTimeout);
+                    transcriptTimeout = setTimeout(() => {
+                        transcriptOverlay.style.display = 'none';
+                    }, 4000);
+                } 
+                else if (msg.type === "offer") { await handleOffer(msg); } 
+                else if (msg.type === "answer") { await handleAnswer(msg); } 
+                else if (msg.type === "candidate") { await handleCandidate(msg); }
+                else { addMessage("User", JSON.stringify(msg)); }
+            } catch (e) {
+                addMessage("", event.data);
             }
-            else if (msg.type === "chat") {
-                addChatMessage(msg.sender, msg.text, 'peer');
+        };
+
+        function addMessage(sender, text, badgeClass) {
+            const div = document.createElement('div');
+            div.className = 'mb-2 p-2 bg-white border rounded';
+            if (badgeClass) {
+                div.innerHTML = `<span class="${badgeClass}">${sender}</span> ${text}`;
+            } else {
+                div.textContent = text;
             }
-            else if (msg.type === "system") {
-                addChatMessage("System", msg.text, 'system');
-                if (msg.text.includes("left")) {
-                    remoteVideo.srcObject = null;
-                    showToast("Partner disconnected");
-                }
-            }
-            else if (msg.type === "offer") await handleOffer(msg);
-            else if (msg.type === "answer") await handleAnswer(msg);
-            else if (msg.type === "candidate") await handleCandidate(msg);
-            
-        } catch(e) { console.error(e); }
-    };
-
-    // --- UI Actions ---
-    function addChatMessage(sender, text, type) {
-        const div = document.createElement('div');
-        div.className = `msg ${type}`;
-        div.innerText = type === 'system' ? text : `${text}`;
-        if (type === 'peer') div.title = sender;
-        chatBox.appendChild(div);
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }
-
-    function showFloatingTranscript(text) {
-        const bubble = document.createElement('div');
-        bubble.className = 'transcript-bubble';
-        bubble.innerText = text;
-        transcriptContainer.appendChild(bubble);
-        setTimeout(() => bubble.remove(), 5000);
-    }
-
-    document.getElementById('msgInput').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            const text = e.target.value;
-            ws.send(JSON.stringify({ type: "chat", text: text, sender: userName }));
-            addChatMessage("Me", text, 'user');
-            e.target.value = '';
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
         }
-    });
 
-    // --- Media Controls ---
-    document.getElementById('btnToggleAudio').onclick = () => {
-        const track = localStream.getAudioTracks()[0];
-        track.enabled = !track.enabled;
-        document.getElementById('btnToggleAudio').classList.toggle('active', !track.enabled);
-    };
+        // --- Chat ---
+        document.getElementById('msg-input').onkeypress = function(e) {
+            if(e.key === 'Enter'){
+                ws.send(this.value);
+                addMessage("Me", this.value);
+                this.value = '';
+            }
+        };
 
-    document.getElementById('btnToggleVideo').onclick = () => {
-        const track = localStream.getVideoTracks()[0];
-        track.enabled = !track.enabled;
-        document.getElementById('btnToggleVideo').classList.toggle('active', !track.enabled);
-    };
-
-    document.getElementById('btnToggleTranscript').onclick = function() {
-        showCaptions = !showCaptions;
-        this.classList.toggle('active', showCaptions);
-        showToast(showCaptions ? "Captions ON" : "Captions OFF");
-    };
-
-    // --- WebRTC Logic ---
-    async function startMedia() {
-        try {
+        // --- WebRTC Logic ---
+        async function startCall() {
             localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             localVideo.srcObject = localStream;
             
-            // Initiate Call
+            peerConnection = new RTCPeerConnection(rtcConfig);
+            peerConnection.onicecandidate = e => {
+                if(e.candidate) {
+                    ws.send(JSON.stringify({ type: "candidate", candidate: e.candidate }));
+                }
+            };
+            peerConnection.ontrack = e => {
+                remoteVideo.srcObject = e.streams[0];
+            };
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            ws.send(JSON.stringify({ type: "offer", sdp: offer }));
+            
+            document.getElementById('startCallBtn').style.display = 'none';
+        }
+
+        async function handleOffer(msg) {
+            if(!localStream) {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localVideo.srcObject = localStream;
+            }
+            
             peerConnection = new RTCPeerConnection(rtcConfig);
             peerConnection.onicecandidate = e => {
                 if(e.candidate) ws.send(JSON.stringify({ type: "candidate", candidate: e.candidate }));
             };
-            peerConnection.ontrack = e => { remoteVideo.srcObject = e.streams[0]; };
-            
+            peerConnection.ontrack = e => {
+                remoteVideo.srcObject = e.streams[0];
+            };
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
             
-            // Allow time for socket to connect then offer
-            setTimeout(async () => {
-                if (userId > consultId) { // Simple logic to decide who offers (avoids collision)
-                    const offer = await peerConnection.createOffer();
-                    await peerConnection.setLocalDescription(offer);
-                    ws.send(JSON.stringify({ type: "offer", sdp: offer }));
-                }
-            }, 1000);
-            
-        } catch(e) { showToast("Camera access denied"); }
-    }
-    
-    // WebRTC Handlers
-    async function handleOffer(msg) {
-        if (!peerConnection) {
-             peerConnection = new RTCPeerConnection(rtcConfig);
-             peerConnection.onicecandidate = e => { if(e.candidate) ws.send(JSON.stringify({ type: "candidate", candidate: e.candidate })); };
-             peerConnection.ontrack = e => { remoteVideo.srcObject = e.streams[0]; };
-             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            ws.send(JSON.stringify({ type: "answer", sdp: answer }));
         }
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        ws.send(JSON.stringify({ type: "answer", sdp: answer }));
-    }
-    
-    async function handleAnswer(msg) { await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp)); }
-    async function handleCandidate(msg) { if(peerConnection) await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate)); }
 
-    startMedia(); // Auto start camera on load
-
-    // --- Transcription Loop ---
-    document.getElementById('btnRecord').onclick = async function() {
-        if (!isRecording) {
-            isRecording = true;
-            this.classList.add('recording');
-            if (!recorderStream) recorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            startTranscribing();
-        } else {
-            isRecording = false;
-            this.classList.remove('recording');
+        async function handleAnswer(msg) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
         }
-    };
 
-    function startTranscribing() {
-        if (!isRecording) return;
-        const mediaRecorder = new MediaRecorder(recorderStream);
-        const chunks = [];
-        mediaRecorder.ondataavailable = e => chunks.push(e.data);
-        mediaRecorder.onstop = () => {
-            const blob = new Blob(chunks, { type: 'audio/webm' });
-            if (blob.size > 1000 && isRecording) {
-                const fd = new FormData();
-                fd.append("audio_blob", blob);
-                fd.append("consultation_id", consultId);
-                fd.append("user_id", userId);
-                fetch("/consultation/transcribe", { method: "POST", body: fd });
+        async function handleCandidate(msg) {
+            if(peerConnection) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
             }
-            if (isRecording) startTranscribing();
+        }
+        
+        document.getElementById('startCallBtn').onclick = startCall;
+
+        // --- ROBUST Audio Transcription Logic ---
+        // Filter out tiny audio blobs to prevent backend processing errors
+        
+        let isRecording = false;
+        let recorderStream = null;
+        const recordBtn = document.getElementById('recordBtn');
+
+        async function startAudioLoop() {
+            if (!isRecording) return;
+            
+            if (!recorderStream) {
+                 recorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            }
+
+            const mediaRecorder = new MediaRecorder(recorderStream);
+            const audioChunks = [];
+
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                
+                // IGNORE tiny blobs (less than 1KB) which are usually just empty headers
+                if (audioBlob.size > 1024 && isRecording) {
+                    const formData = new FormData();
+                    formData.append("audio_blob", audioBlob);
+                    formData.append("consultation_id", consultId);
+                    formData.append("user_id", userId);
+                    
+                    fetch("/consultation/transcribe", { method: "POST", body: formData });
+                }
+                
+                if (isRecording) {
+                    startAudioLoop(); 
+                }
+            };
+
+            mediaRecorder.start();
+            
+            setTimeout(() => {
+                if (mediaRecorder.state === "recording") {
+                    mediaRecorder.stop();
+                }
+            }, 3000); 
+        }
+
+        recordBtn.onclick = async () => {
+            if (!isRecording) {
+                isRecording = true;
+                recordBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Transcription';
+                recordBtn.classList.replace('btn-outline-light', 'btn-danger');
+                startAudioLoop();
+            } else {
+                isRecording = false;
+                recordBtn.innerHTML = '<i class="fas fa-microphone"></i> Start Transcription';
+                recordBtn.classList.replace('btn-danger', 'btn-outline-light');
+            }
         };
-        mediaRecorder.start();
-        setTimeout(() => mediaRecorder.stop(), 3000);
-    }
-</script>
-{% endblock %}
-"""
 
-# Store templates
-HTML_TEMPLATES = {
-    "base": BASE_TEMPLATE,
-    "consultation": CONSULTATION_TEMPLATE,
-    # Login/Register/Dashboard templates are simplified for brevity but follow the same modular pattern
-    "login": """{% extends "base" %}
-    {% block content %}
-    <div class="row justify-content-center mt-5"><div class="col-md-5"><div class="card p-4 shadow-sm">
-        <h3 class="text-center mb-4">Portal Login</h3>
-        <form action="/auth/login" method="post">
-            <div class="mb-3"><label>Email</label><input type="email" name="username" class="form-control" required></div>
-            <div class="mb-3"><label>Password</label><input type="password" name="password" class="form-control" required></div>
-            <button class="btn btn-primary w-100">Login</button>
-        </form>
-        <div class="mt-3 text-center"><a href="/register">Create Patient Account</a> | <form action="/auth/seed" method="post" class="d-inline"><button class="btn btn-link p-0">Seed Data</button></form></div>
-    </div></div></div>
-    {% endblock %}""",
-    
-    "register": """{% extends "base" %}
-    {% block content %}
-    <div class="row justify-content-center mt-5"><div class="col-md-5"><div class="card p-4">
-        <h3>New Patient</h3>
-        <form action="/auth/register" method="post">
-            <div class="mb-3"><label>Name</label><input type="text" name="full_name" class="form-control" required></div>
-            <div class="mb-3"><label>Email</label><input type="email" name="email" class="form-control" required></div>
-            <div class="mb-3"><label>Password</label><input type="password" name="password" class="form-control" required></div>
-            <button class="btn btn-success w-100">Register</button>
-        </form>
-    </div></div></div>
-    {% endblock %}""",
-
-    "dashboard_patient": """{% extends "base" %}
-    {% block content %}
-    <div class="row"><div class="col-md-8"><div class="card p-4">
-        <h4>My Triage</h4>
-        {% if active_consultation %}
-            <div class="alert alert-success">
-                <strong>Active Case:</strong> {{ active_consultation.specialty }} <br>
-                Status: {{ active_consultation.status }}
-                {% if active_consultation.status == 'active' %}<a href="/consultation/{{ active_consultation.id }}" class="btn btn-success ms-3">Join Room</a>{% endif %}
-                {% if active_consultation.status == 'pending_payment' %}<a href="/billing/{{ active_consultation.id }}" class="btn btn-warning ms-3">Pay Now</a>{% endif %}
-            </div>
-        {% else %}
-            <form action="/triage/start" method="post">
-                <select name="specialty" class="form-select mb-3"><option>Cardiology</option><option>Dermatology</option><option>General</option></select>
-                <textarea name="symptoms" class="form-control mb-3" placeholder="Describe symptoms..."></textarea>
-                <button class="btn btn-primary">Request Doctor</button>
-            </form>
-        {% endif %}
-    </div></div></div>
-    {% endblock %}""",
-    
-    "dashboard_doctor": """{% extends "base" %}
-    {% block content %}
-    <h4>Doctor Dashboard</h4>
-    <div class="d-flex justify-content-between mb-3">
-        <span>Status: <strong>{{ user.status }}</strong></span>
-        <a href="/doctor/toggle_status" class="btn btn-sm btn-outline-primary">Toggle Status</a>
-    </div>
-    <div class="row">
-        {% for c in consultations %}
-        <div class="col-md-4"><div class="card p-3 mb-3">
-            <h5>Patient #{{ c.patient_id }}</h5>
-            <p>Status: {{ c.status }}</p>
-            {% if c.status == 'active' %}<a href="/consultation/{{ c.id }}" class="btn btn-success">Enter Room</a>{% endif %}
-        </div></div>
-        {% endfor %}
-    </div>
-    {% endblock %}""",
-    
-    "dashboard_admin": """{% extends "base" %}
-    {% block content %}
-    <h4>Admin Panel</h4>
-    <div class="row">
-        <div class="col-md-4">
-            <form action="/admin/add_doctor" method="post" class="card p-3">
-                <h6>Add Doctor</h6>
-                <input name="full_name" placeholder="Name" class="form-control mb-2">
-                <input name="email" placeholder="Email" class="form-control mb-2">
-                <input name="password" placeholder="Pass" class="form-control mb-2">
-                <select name="specialty" class="form-select mb-2"><option>Cardiology</option><option>General</option></select>
-                <button class="btn btn-primary btn-sm">Add</button>
-            </form>
-        </div>
-    </div>
-    {% endblock %}""",
-
-    "billing": """{% extends "base" %}
-    {% block content %}
-    <div class="card p-5 text-center" style="max-width:500px; margin:auto;">
-        <h3>Invoice: $20.00</h3>
-        <p>Consultation #{{ consultation.id }}</p>
-        <form action="/billing/process" method="post">
-            <input type="hidden" name="consultation_id" value="{{ consultation.id }}">
-            <button name="outcome" value="success" class="btn btn-success">Pay Success</button>
-            <button name="outcome" value="fail" class="btn btn-danger">Pay Fail</button>
-        </form>
-    </div>
+    </script>
     {% endblock %}"""
 }
 

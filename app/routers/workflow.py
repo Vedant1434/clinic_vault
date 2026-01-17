@@ -265,4 +265,8 @@ async def transcribe_endpoint(
         # Broadcast via WebSocket
         await manager.broadcast(msg, consultation_id)
         
+        # Optionally: Append to DB transcript_enc (need to fetch, decrypt, append, encrypt, save)
+        # For performance in this loop, we might skip DB save for every chunk or do it async.
+        # Here we just audit log occasionally.
+        
     return {"status": "ok", "text": text}
