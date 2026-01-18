@@ -14,8 +14,21 @@
                 </small>
             </div>
 
+            <!-- Error Alert -->
+            {% if errors %}
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <i class="fas fa-exclamation-circle me-2"></i>
+                <ul class="mb-0">
+                    {% for error in errors %}
+                    <li>{{ error }}</li>
+                    {% endfor %}
+                </ul>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+            {% endif %}
+
             <!-- Registration Form -->
-            <form action="/auth/register" method="post">
+            <form id="registerForm" action="/auth/register" method="post">
                 <div class="mb-3">
                     <label class="form-label">Full Name</label>
                     <div class="input-group">
@@ -23,8 +36,10 @@
                         <input
                             type="text"
                             name="full_name"
+                            id="full_name"
                             class="form-control"
                             placeholder="John Doe"
+                            value="{{ full_name or '' }}"
                             required
                         >
                     </div>
@@ -37,8 +52,10 @@
                         <input
                             type="email"
                             name="email"
+                            id="email"
                             class="form-control"
                             placeholder="john@example.com"
+                            value="{{ email or '' }}"
                             required
                         >
                     </div>
@@ -51,8 +68,26 @@
                         <input
                             type="password"
                             name="password"
+                            id="password"
                             class="form-control"
-                            placeholder="Create a strong password"
+                            placeholder="Create a strong password (min. 6 characters)"
+                            required
+                            minlength="6"
+                        >
+                    </div>
+                    <small class="text-muted">Password must be at least 6 characters long</small>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Confirm Password</label>
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="fas fa-lock"></i></span>
+                        <input
+                            type="password"
+                            name="password_confirm"
+                            id="password_confirm"
+                            class="form-control"
+                            placeholder="Confirm your password"
                             required
                         >
                     </div>
@@ -62,6 +97,60 @@
                     <i class="fas fa-file-medical me-1"></i> Create Record
                 </button>
             </form>
+
+            <script>
+                // Handle form submission with AJAX for better error handling
+                document.getElementById('registerForm').addEventListener('submit', async function(e) {
+                    e.preventDefault();
+                    
+                    const password = document.getElementById('password').value;
+                    const passwordConfirm = document.getElementById('password_confirm').value;
+                    
+                    // Client-side password match check
+                    if (password !== passwordConfirm) {
+                        if (typeof showToast !== 'undefined') {
+                            showToast('Passwords do not match!', 'error');
+                        } else {
+                            alert('Error: Passwords do not match!');
+                        }
+                        return;
+                    }
+                    
+                    const formData = new FormData(this);
+                    const response = await fetch('/auth/register', {
+                        method: 'POST',
+                        body: formData,
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        if (typeof showToast !== 'undefined') {
+                            showToast('Registration successful! Redirecting to login...', 'success');
+                        } else {
+                            alert('Registration successful! Redirecting to login...');
+                        }
+                        setTimeout(() => window.location.href = '/', 1500);
+                    } else {
+                        const data = await response.json();
+                        if (data.errors && data.errors.length > 0) {
+                            const errorMsg = data.errors.join('<br>');
+                            if (typeof showToast !== 'undefined') {
+                                showToast(errorMsg, 'error');
+                            } else {
+                                alert('Error: ' + data.errors.join('\n'));
+                            }
+                        } else {
+                            if (typeof showToast !== 'undefined') {
+                                showToast('Registration failed. Please try again.', 'error');
+                            } else {
+                                alert('Error: Registration failed. Please try again.');
+                            }
+                        }
+                    }
+                });
+            </script>
 
             <!-- Footer Link -->
             <div class="text-center mt-3">

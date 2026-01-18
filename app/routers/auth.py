@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Session, select
+import re
 
 from app.database import get_db
 from app.models import User, UserRole, DoctorStatus
@@ -14,14 +15,29 @@ router = APIRouter()
 async def root():
     return render_template("login", {})
 
+@router.get("/register", response_class=HTMLResponse)
+async def register_page():
+    return render_template("register", {})
+
 @router.post("/auth/login")
 async def login(
-    request: OAuth2PasswordRequestForm = Depends(),
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
     session: Session = Depends(get_db)
 ):
-    user = session.exec(select(User).where(User.email == request.username)).first()
-    if not user or not pwd_context.verify(request.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Incorrect email or password")
+    user = session.exec(select(User).where(User.email == username)).first()
+    if not user or not pwd_context.verify(password, user.hashed_password):
+        # Return JSON response for AJAX handling
+        if request.headers.get("accept") == "application/json":
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Incorrect email or password"}
+            )
+        # Return HTML with error message for form submission
+        return render_template("login", {
+            "error": "Incorrect email or password. Please try again."
+        })
     
     access_token = create_access_token(data={"sub": user.email})
     audit_log(session, user, "User Login", "Authentication System", "Access Control")
@@ -32,14 +48,44 @@ async def login(
 
 @router.post("/auth/register")
 async def register(
+    request: Request,
     full_name: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
+    password_confirm: str = Form(None),
     session: Session = Depends(get_db)
 ):
+    errors = []
+    
+    # Validate email format
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, email):
+        errors.append("Invalid email format")
+    
+    # Validate password strength
+    if len(password) < 6:
+        errors.append("Password must be at least 6 characters long")
+    
+    # Check password confirmation if provided
+    if password_confirm and password != password_confirm:
+        errors.append("Passwords do not match")
+    
+    # Check if email already exists
     existing = session.exec(select(User).where(User.email == email)).first()
     if existing:
-        return HTMLResponse("Email already registered", status_code=400)
+        errors.append("Email already registered")
+    
+    if errors:
+        if request.headers.get("accept") == "application/json":
+            return JSONResponse(
+                status_code=400,
+                content={"errors": errors}
+            )
+        return render_template("register", {
+            "errors": errors,
+            "full_name": full_name,
+            "email": email
+        })
     
     new_user = User(
         email=email,

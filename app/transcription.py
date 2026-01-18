@@ -1,6 +1,11 @@
 import os
 import threading
-from faster_whisper import WhisperModel
+try:
+    from faster_whisper import WhisperModel
+    WHISPER_AVAILABLE = True
+except ImportError:
+    WHISPER_AVAILABLE = False
+    WhisperModel = None
 
 # -------------------------------
 # Thread-safe global model cache
@@ -14,6 +19,10 @@ def get_model():
     Optimized for CPU-only, low-RAM environments.
     """
     global _model
+    
+    if not WHISPER_AVAILABLE:
+        print("[Warning] faster-whisper not installed. Transcription disabled.")
+        return None
 
     if _model is None:
         with _model_lock:

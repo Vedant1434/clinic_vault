@@ -7,3 +7,8 @@ passlib
 jinja2
 cryptography
 websockets
+pytest
+pytest-asyncio
+httpx
+# Optional: For audio transcription (install separately if needed)
+# faster-whisper

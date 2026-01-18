@@ -1,5 +1,60 @@
+{# This is a Jinja2 template file #}
 {% extends "base.html" %}
 {% block content %}
+<style>
+    .video-container {
+        position: relative;
+        background: #000;
+        min-height: 400px;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .video-container video {
+        width: 100%;
+        height: auto;
+        max-height: 500px;
+    }
+    #localVideo {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 150px;
+        height: 112px;
+        border: 2px solid #fff;
+        border-radius: 4px;
+        z-index: 20;
+    }
+    #transcriptOverlay {
+           position: absolute;
+           left: 50%;
+           bottom: 30px;
+           transform: translateX(-50%);
+           min-width: 60%;
+           max-width: 90%;
+           background: rgba(20, 20, 20, 0.85);
+           color: #fff;
+           padding: 14px 18px;
+           border-radius: 8px;
+           display: none;
+           z-index: 25;
+           font-size: 16px;
+           text-align: center;
+           box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+    }
+    .prescription-item, .file-item {
+        transition: all 0.2s;
+    }
+    .prescription-item:hover, .file-item:hover {
+        background-color: #f8f9fa;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    .animate-pulse {
+        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+</style>
 <div class="row">
     <div class="col-md-8">
         <!-- WebRTC Video Container -->
@@ -9,29 +64,147 @@
             <div id="transcriptOverlay"></div> <!-- Transcript Overlay -->
 
             <div class="position-absolute bottom-0 start-0 p-3" style="width: 100%; z-index: 30;">
-                <div class="d-flex justify-content-between align-items-center">
-                    <div>
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
                         <span class="badge bg-danger animate-pulse"><i class="fas fa-circle"></i> Encrypted Live Feed</span>
-                        <button id="startCallBtn" class="btn btn-success btn-sm ms-2">Start Video Call</button>
+                        <span class="badge bg-info" id="sessionTimer"><i class="fas fa-clock"></i> <span id="timerDisplay">00:00:00</span></span>
+                        <button id="startCallBtn" class="btn btn-success btn-sm">Start Video Call</button>
                     </div>
-                    <button id="recordBtn" class="btn btn-outline-light btn-sm"><i class="fas fa-microphone"></i> Start Transcription</button>
+                    <div class="d-flex align-items-center gap-2">
+                        <button id="muteBtn" class="btn btn-outline-light btn-sm" style="display: none;" title="Mute/Unmute">
+                            <i class="fas fa-microphone"></i>
+                        </button>
+                        <button id="videoToggleBtn" class="btn btn-outline-light btn-sm" style="display: none;" title="Toggle Video">
+                            <i class="fas fa-video"></i>
+                        </button>
+                        <button id="recordBtn" class="btn btn-outline-light btn-sm"><i class="fas fa-microphone"></i> Start Transcription</button>
+                    </div>
                 </div>
             </div>
         </div>
 
         {% if user.role == 'doctor' %}
-        <div class="card">
+        <!-- Medical Notes Card -->
+        <div class="card mb-3">
             <div class="card-header d-flex justify-content-between">
-                <span>Medical Notes (Encrypted Storage)</span>
+                <span><i class="fas fa-file-medical me-2"></i>Medical Notes (Encrypted Storage)</span>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#notesTemplates" title="Quick Templates">
+                    <i class="fas fa-magic"></i>
+                </button>
             </div>
             <div class="card-body">
-                <form action="/consultation/notes" method="post">
+                <!-- Notes Templates (Collapsible) -->
+                <div class="collapse mb-2" id="notesTemplates">
+                    <div class="card card-body bg-light">
+                        <small class="text-muted mb-2">Quick Templates:</small>
+                        <div class="btn-group-vertical w-100" role="group">
+                            <button type="button" class="btn btn-sm btn-outline-primary template-btn" data-template="routine">Routine Checkup</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary template-btn" data-template="followup">Follow-up Visit</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary template-btn" data-template="prescription">Prescription Review</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <form action="/consultation/notes" method="post" id="notesForm">
                     <input type="hidden" name="consultation_id" value="{{ consultation.id }}">
-                    <textarea name="notes" class="form-control mb-2" rows="4" placeholder="Type clinical notes here..."></textarea>
-                    <button class="btn btn-primary btn-sm">Save & Encrypt</button>
+                    <textarea name="notes" id="notesTextarea" class="form-control mb-2" rows="4" placeholder="Type clinical notes here..."></textarea>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <button class="btn btn-primary btn-sm" type="submit">
+                            <i class="fas fa-save me-1"></i>Save & Encrypt
+                        </button>
+                        <small class="text-muted" id="notesCharCount">0 characters</small>
+                    </div>
                 </form>
-                <hr>
-                <a href="/consultation/end/{{ consultation.id }}" class="btn btn-outline-danger w-100">End Session</a>
+            </div>
+        </div>
+
+        <!-- Vital Signs & Quick Actions -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="fas fa-heartbeat me-2"></i>Vital Signs & Quick Actions
+            </div>
+            <div class="card-body">
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label small">BP (mmHg)</label>
+                        <input type="text" class="form-control form-control-sm" id="vitalBP" placeholder="120/80">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">Temp (°F)</label>
+                        <input type="text" class="form-control form-control-sm" id="vitalTemp" placeholder="98.6">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">Pulse (bpm)</label>
+                        <input type="text" class="form-control form-control-sm" id="vitalPulse" placeholder="72">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">O2 Sat (%)</label>
+                        <input type="text" class="form-control form-control-sm" id="vitalO2" placeholder="98">
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-success w-100" onclick="saveVitals()">
+                    <i class="fas fa-save me-1"></i>Save Vitals to Notes
+                </button>
+            </div>
+        </div>
+
+        <!-- Prescription Management -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="fas fa-pills me-2"></i>Prescription
+            </div>
+            <div class="card-body">
+                <div class="mb-2">
+                    <input type="text" class="form-control form-control-sm" id="prescriptionMed" placeholder="Medication name">
+                </div>
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <input type="text" class="form-control form-control-sm" id="prescriptionDose" placeholder="Dosage">
+                    </div>
+                    <div class="col-6">
+                        <input type="text" class="form-control form-control-sm" id="prescriptionFreq" placeholder="Frequency">
+                    </div>
+                </div>
+                <div class="mb-2">
+                    <input type="text" class="form-control form-control-sm" id="prescriptionDuration" placeholder="Duration (e.g., 7 days)">
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-primary flex-fill" onclick="addPrescription()">
+                        <i class="fas fa-plus me-1"></i>Add
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="copyPrescriptionToNotes()">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+                <div id="prescriptionList" class="mt-2"></div>
+            </div>
+        </div>
+
+        <!-- File Sharing -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="fas fa-file-upload me-2"></i>File Sharing
+            </div>
+            <div class="card-body">
+                <input type="file" class="form-control form-control-sm mb-2" id="fileUpload" multiple accept="image/*,.pdf,.doc,.docx">
+                <button class="btn btn-sm btn-primary w-100" onclick="uploadFile()">
+                    <i class="fas fa-upload me-1"></i>Upload File
+                </button>
+                <div id="fileList" class="mt-2"></div>
+            </div>
+        </div>
+
+        <!-- Session Actions -->
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-tasks me-2"></i>Session Actions
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="/consultation/end/{{ consultation.id }}" class="btn btn-outline-danger">
+                        <i class="fas fa-stop-circle me-1"></i>End Session
+                    </a>
+                </div>
             </div>
         </div>
         {% else %}
@@ -46,13 +219,42 @@
     </div>
 
     <div class="col-md-4">
+        <!-- Transfer Notification -->
+        {% if user.role == 'doctor' and current_doctor and current_doctor.id == user.id %}
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="fas fa-user-md me-2"></i>
+            <strong>You are the assigned doctor</strong> for this consultation.
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        {% elif user.role == 'patient' %}
+        <div class="alert alert-info">
+            <i class="fas fa-user-md me-2"></i>
+            <strong>Your Doctor:</strong> {{ current_doctor.full_name if current_doctor else 'Unknown' }}
+            {% if current_doctor and current_doctor.specialty %}
+            <br><small class="text-muted">Specialty: {{ current_doctor.specialty }}</small>
+            {% endif %}
+        </div>
+        {% endif %}
+
         <!-- Patient Data -->
         <div class="card mb-3">
-            <div class="card-header bg-info text-white">Current Patient Data</div>
+            <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-user-injured me-2"></i>Patient Information</span>
+                <span class="badge bg-light text-dark" id="patientAgeBadge"></span>
+            </div>
             <div class="card-body">
-                <h6>Symptoms (Decrypted):</h6>
-                <p class="alert alert-secondary">{{ symptoms_decrypted }}</p>
-                <small class="text-muted d-block mb-2"><i class="fas fa-eye"></i> Decrypted for: {{ user.full_name }}</small>
+                <div class="mb-2">
+                    <strong>Patient:</strong> {{ current_patient.full_name if current_patient else 'Unknown' }}
+                </div>
+                {% if current_patient %}
+                <div class="mb-2 small text-muted">
+                    <i class="fas fa-envelope me-1"></i>{{ current_patient.email }}
+                </div>
+                {% endif %}
+                <hr>
+                <h6 class="mb-2">Chief Complaint:</h6>
+                <p class="alert alert-secondary mb-2">{{ symptoms_decrypted }}</p>
+                <small class="text-muted d-block"><i class="fas fa-eye"></i> Decrypted for: {{ user.full_name }}</small>
             </div>
         </div>
 
@@ -71,6 +273,13 @@
                             <span class="badge bg-danger rounded-pill small d-none" id="live-indicator" style="font-size: 0.6em;">LIVE</span>
                         </button>
                     </li>
+                    {% if user.role == 'doctor' %}
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="actions-tab" data-bs-toggle="tab" data-bs-target="#actions-panel" type="button" role="tab" aria-controls="actions-panel" aria-selected="false">
+                            <i class="fas fa-list-check"></i> Actions
+                        </button>
+                    </li>
+                    {% endif %}
                 </ul>
             </div>
 
@@ -102,23 +311,89 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Actions Panel (Doctor Only) -->
+                {% if user.role == 'doctor' %}
+                <div class="tab-pane fade flex-grow-1 h-100" id="actions-panel" role="tabpanel" aria-labelledby="actions-tab">
+                    <div class="p-3">
+                        <div class="mb-3">
+                            <h6 class="small fw-bold text-muted mb-2">Consultation Actions Log</h6>
+                            <div id="actionsLog" class="small" style="max-height: 300px; overflow-y: auto;">
+                                <div class="text-muted text-center">No actions recorded yet</div>
+                            </div>
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-sm btn-outline-primary" onclick="logAction('Lab Work Requested')">
+                                <i class="fas fa-flask me-1"></i>Request Lab Work
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary" onclick="logAction('Follow-up Scheduled')">
+                                <i class="fas fa-calendar me-1"></i>Schedule Follow-up
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary" onclick="logAction('Referral Made')">
+                                <i class="fas fa-user-md me-1"></i>Make Referral
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
 
-        <!-- History Sidebar (Doctor Only) -->
-        {% if history %}
+        <!-- Patient History - Show ONLY for doctors -->
+        {% if user.role == 'doctor' and history %}
         <div class="card">
-            <div class="card-header bg-secondary text-white">Patient History</div>
-            <div class="card-body p-0" style="max-height: 200px; overflow-y: auto;">
-                <ul class="list-group list-group-flush">
+            <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-history me-2"></i>Previous Consultations</span>
+                <span class="badge bg-light text-dark">{{ history|length }}</span>
+            </div>
+            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                <div class="accordion accordion-flush" id="historyAccordion">
                     {% for h in history %}
-                    <li class="list-group-item">
-                        <small class="fw-bold">{{ h.date }} - {{ h.specialty }}</small><br>
-                        <small class="text-muted">Dr. {{ h.doctor }}</small>
-                        <div class="mt-1 small fst-italic border-start border-primary ps-2">{{ h.notes }}</div>
-                    </li>
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="heading{{ h.id }}">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse{{ h.id }}" aria-expanded="false" aria-controls="collapse{{ h.id }}">
+                                <div class="w-100">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <small class="fw-bold text-primary">{{ h.date }}</small><br>
+                                            <small class="text-muted">{{ h.doctor }} - {{ h.specialty }}</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </button>
+                        </h2>
+                        <div id="collapse{{ h.id }}" class="accordion-collapse collapse" aria-labelledby="heading{{ h.id }}" data-bs-parent="#historyAccordion">
+                            <div class="accordion-body">
+                                <div class="mb-2">
+                                    <strong class="text-muted small">Symptoms:</strong>
+                                    <p class="small mb-2 border-start border-info ps-2">{{ h.symptoms }}</p>
+                                </div>
+                                <div class="mb-2">
+                                    <strong class="text-muted small">Clinical Notes:</strong>
+                                    <p class="small mb-2 border-start border-success ps-2 fst-italic">{{ h.notes }}</p>
+                                </div>
+                                {% if h.transcript %}
+                                <div>
+                                    <strong class="text-muted small">Transcript:</strong>
+                                    <p class="small mb-0 border-start border-warning ps-2 text-muted">{{ h.transcript[:200] }}{% if h.transcript|length > 200 %}...{% endif %}</p>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
                     {% endfor %}
-                </ul>
+                </div>
+            </div>
+        </div>
+        {% elif user.role == 'doctor' %}
+        <!-- Empty state for doctors when no history -->
+        <div class="card">
+            <div class="card-header bg-secondary text-white">
+                <i class="fas fa-history me-2"></i>Previous Consultations
+            </div>
+            <div class="card-body text-center text-muted">
+                <i class="fas fa-inbox fa-2x mb-2"></i>
+                <p class="small mb-0">No previous consultations found for this patient.</p>
             </div>
         </div>
         {% endif %}
@@ -126,11 +401,32 @@
 </div>
 
 <!-- WebRTC & Socket Logic -->
+<script id="consultation-data" type="application/json">
+{
+    "consultId": "{{ consultation.id }}",
+    "userId": "{{ user.id }}",
+    "userRole": "{{ user.role }}",
+    "sessionStartTimestamp": {% if session_start_timestamp %}{{ session_start_timestamp }}{% else %}null{% endif %}
+}
+</script>
 <script>
-    const consultId = "{{ consultation.id }}";
-    const userId = "{{ user.id }}";
-    const wsUrl = "ws://" + window.location.host + "/ws/" + consultId + "/" + userId;
-    const ws = new WebSocket(wsUrl);
+    // Parse consultation data from JSON
+    const consultationData = JSON.parse(document.getElementById('consultation-data').textContent);
+    const consultId = consultationData.consultId;
+    const userId = consultationData.userId;
+    const userRole = consultationData.userRole;
+    const sessionStartTimestamp = consultationData.sessionStartTimestamp || Date.now();
+    // Use wss:// for HTTPS, ws:// for HTTP
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = wsProtocol + "//" + window.location.host + "/ws/" + consultId + "/" + userId;
+    let ws;
+    
+    // Initialize WebSocket with error handling
+    try {
+        ws = new WebSocket(wsUrl);
+    } catch (error) {
+        console.error('WebSocket connection error:', error);
+    }
 
     const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
@@ -145,45 +441,80 @@
 
     let transcriptTimeout;
 
+    // WebSocket error handling
+    if (ws) {
+        ws.onerror = function(error) {
+            console.error('WebSocket error:', error);
+            if (chatBox) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'alert alert-warning';
+                errorDiv.textContent = 'Connection error. Please refresh the page.';
+                chatBox.appendChild(errorDiv);
+            }
+        };
+
+        ws.onclose = function(event) {
+            console.log('WebSocket closed:', event.code, event.reason);
+            if (chatBox) {
+                const closeDiv = document.createElement('div');
+                closeDiv.className = 'alert alert-info';
+                closeDiv.textContent = 'Connection closed. Refresh to reconnect.';
+                chatBox.appendChild(closeDiv);
+            }
+        };
+
+        ws.onopen = function() {
+            console.log('WebSocket connected');
+        };
+    }
+
     // WebRTC Config
     const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
     let peerConnection;
     let localStream;
 
     // --- WebSocket Handling ---
-    ws.onmessage = async function(event) {
-        try {
-            const msg = JSON.parse(event.data);
+    if (ws) {
+        ws.onmessage = async function(event) {
+            try {
+                const msg = JSON.parse(event.data);
 
-            if (msg.type === "transcript") {
-                handleTranscript(msg);
+                if (msg.type === "transcript") {
+                    handleTranscript(msg);
+                }
+                else if (msg.type === "offer") { await handleOffer(msg); }
+                else if (msg.type === "answer") { await handleAnswer(msg); }
+                else if (msg.type === "candidate") { await handleCandidate(msg); }
+                else {
+                    // Assume chat message
+                    addChatMessage("User", JSON.stringify(msg));
+                }
+            } catch (e) {
+                // Plain text fallback (chat)
+                addChatMessage("", event.data);
             }
-            else if (msg.type === "offer") { await handleOffer(msg); }
-            else if (msg.type === "answer") { await handleAnswer(msg); }
-            else if (msg.type === "candidate") { await handleCandidate(msg); }
-            else {
-                // Assume chat message
-                addChatMessage("User", JSON.stringify(msg));
-            }
-        } catch (e) {
-            // Plain text fallback (chat)
-            addChatMessage("", event.data);
-        }
-    };
+        };
+    }
 
     function handleTranscript(msg) {
+        if (!msg || !msg.text) return;
+        
         // 1. Show in Video Overlay (if enabled)
-        if (toggleOverlayBtn.checked) {
+        if (toggleOverlayBtn && toggleOverlayBtn.checked && transcriptOverlay) {
             transcriptOverlay.textContent = msg.text;
             transcriptOverlay.style.display = 'block';
 
             clearTimeout(transcriptTimeout);
             transcriptTimeout = setTimeout(() => {
-                transcriptOverlay.style.display = 'none';
+                if (transcriptOverlay) {
+                    transcriptOverlay.style.display = 'none';
+                }
             }, 4000);
         }
 
         // 2. Show in Dedicated Transcript Panel
+        if (!transcriptBox) return;
+        
         if (transcriptPlaceholder) transcriptPlaceholder.style.display = 'none';
 
         const div = document.createElement('div');
@@ -193,86 +524,163 @@
         transcriptBox.scrollTop = transcriptBox.scrollHeight;
 
         // 3. Show 'Live' badge on tab if not active
-        liveIndicator.classList.remove('d-none');
-        setTimeout(() => liveIndicator.classList.add('d-none'), 2000);
+        if (liveIndicator) {
+            liveIndicator.classList.remove('d-none');
+            setTimeout(() => {
+                if (liveIndicator) {
+                    liveIndicator.classList.add('d-none');
+                }
+            }, 2000);
+        }
     }
 
     function addChatMessage(sender, text) {
+        if (!chatBox) return;
+        
         const div = document.createElement('div');
         div.className = 'mb-2 p-2 bg-white border rounded';
         // Simple check to distinguish 'Me' from others
         if (sender === "Me") {
              div.style.borderLeft = "4px solid #0d6efd";
         }
-        div.innerHTML = `<strong>${sender}</strong>: ${text}`;
+        div.innerHTML = `<strong>${sender || 'System'}</strong>: ${text || ''}`;
         chatBox.appendChild(div);
         chatBox.scrollTop = chatBox.scrollHeight;
     }
 
     // --- Chat ---
-    document.getElementById('msg-input').onkeypress = function(e) {
-        if(e.key === 'Enter'){
-            ws.send(this.value);
-            addChatMessage("Me", this.value);
-            this.value = '';
-        }
-    };
+    const msgInput = document.getElementById('msg-input');
+    if (msgInput) {
+        msgInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && this.value.trim()) {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(this.value);
+                    addChatMessage("Me", this.value);
+                    this.value = '';
+                } else {
+                    if (typeof showToast !== 'undefined') {
+                        showToast('Connection not available. Please refresh the page.', 'error');
+                    } else {
+                        alert('Connection not available. Please refresh the page.');
+                    }
+                }
+            }
+        });
+    }
 
     // --- WebRTC Logic ---
     async function startCall() {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = localStream;
-
-        peerConnection = new RTCPeerConnection(rtcConfig);
-        peerConnection.onicecandidate = e => {
-            if(e.candidate) {
-                ws.send(JSON.stringify({ type: "candidate", candidate: e.candidate }));
+        try {
+            if (!localVideo || !remoteVideo) {
+                if (typeof showToast !== 'undefined') {
+                    showToast('Video elements not found', 'error');
+                } else {
+                    alert('Video elements not found');
+                }
+                return;
             }
-        };
-        peerConnection.ontrack = e => {
-            remoteVideo.srcObject = e.streams[0];
-        };
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            localVideo.srcObject = localStream;
 
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        ws.send(JSON.stringify({ type: "offer", sdp: offer }));
+            peerConnection = new RTCPeerConnection(rtcConfig);
+            peerConnection.onicecandidate = e => {
+                if(e.candidate && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "candidate", candidate: e.candidate }));
+                }
+            };
+            peerConnection.ontrack = e => {
+                if (remoteVideo) {
+                    remoteVideo.srcObject = e.streams[0];
+                }
+            };
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-        document.getElementById('startCallBtn').style.display = 'none';
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "offer", sdp: offer }));
+            } else {
+                if (typeof showToast !== 'undefined') {
+                    showToast('WebSocket not connected. Please refresh the page.', 'error');
+                } else {
+                    alert('WebSocket not connected. Please refresh the page.');
+                }
+                return;
+            }
+
+            if (startCallBtn) {
+                startCallBtn.style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Error starting call:', error);
+            if (typeof showToast !== 'undefined') {
+                showToast('Failed to start video call: ' + error.message, 'error');
+            } else {
+                alert('Failed to start video call: ' + error.message);
+            }
+        }
     }
 
     async function handleOffer(msg) {
-        if(!localStream) {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            localVideo.srcObject = localStream;
+        try {
+            if(!localStream) {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                if (localVideo) {
+                    localVideo.srcObject = localStream;
+                }
+            }
+
+            peerConnection = new RTCPeerConnection(rtcConfig);
+            peerConnection.onicecandidate = e => {
+                if(e.candidate && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "candidate", candidate: e.candidate }));
+                }
+            };
+            peerConnection.ontrack = e => {
+                if (remoteVideo) {
+                    remoteVideo.srcObject = e.streams[0];
+                }
+            };
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "answer", sdp: answer }));
+            }
+        } catch (error) {
+            console.error('Error handling offer:', error);
         }
-
-        peerConnection = new RTCPeerConnection(rtcConfig);
-        peerConnection.onicecandidate = e => {
-            if(e.candidate) ws.send(JSON.stringify({ type: "candidate", candidate: e.candidate }));
-        };
-        peerConnection.ontrack = e => {
-            remoteVideo.srcObject = e.streams[0];
-        };
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        ws.send(JSON.stringify({ type: "answer", sdp: answer }));
     }
 
     async function handleAnswer(msg) {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-    }
-
-    async function handleCandidate(msg) {
-        if(peerConnection) {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
+        try {
+            if (peerConnection) {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            }
+        } catch (error) {
+            console.error('Error handling answer:', error);
         }
     }
 
-    document.getElementById('startCallBtn').onclick = startCall;
+    async function handleCandidate(msg) {
+        try {
+            if(peerConnection && msg.candidate) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            }
+        } catch (error) {
+            console.error('Error handling candidate:', error);
+        }
+    }
+
+    const startCallBtn = document.getElementById('startCallBtn');
+    if (startCallBtn) {
+        startCallBtn.addEventListener('click', startCall);
+    }
 
     // --- ROBUST Audio Transcription Logic ---
     // Filter out tiny audio blobs to prevent backend processing errors
@@ -322,18 +730,362 @@
         }, 3000);
     }
 
-    recordBtn.onclick = async () => {
-        if (!isRecording) {
-            isRecording = true;
-            recordBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Transcription';
-            recordBtn.classList.replace('btn-outline-light', 'btn-danger');
-            startAudioLoop();
-        } else {
-            isRecording = false;
-            recordBtn.innerHTML = '<i class="fas fa-microphone"></i> Start Transcription';
-            recordBtn.classList.replace('btn-danger', 'btn-outline-light');
+    if (recordBtn) {
+        recordBtn.addEventListener('click', async () => {
+            if (!isRecording) {
+                isRecording = true;
+                recordBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Transcription';
+                recordBtn.classList.replace('btn-outline-light', 'btn-danger');
+                startAudioLoop();
+            } else {
+                isRecording = false;
+                recordBtn.innerHTML = '<i class="fas fa-microphone"></i> Start Transcription';
+                recordBtn.classList.replace('btn-danger', 'btn-outline-light');
+            }
+        });
+    }
+
+    // --- Consultation Timer ---
+    let timerInterval;
+    
+    function updateTimer() {
+        const now = Date.now();
+        const diff = Math.max(0, Math.floor((now - sessionStartTimestamp) / 1000)); // seconds
+        const hours = Math.floor(diff / 3600);
+        const minutes = Math.floor((diff % 3600) / 60);
+        const seconds = diff % 60;
+        
+        const timerDisplay = document.getElementById('timerDisplay');
+        if (timerDisplay) {
+            timerDisplay.textContent = 
+                String(hours).padStart(2, '0') + ':' + 
+                String(minutes).padStart(2, '0') + ':' + 
+                String(seconds).padStart(2, '0');
         }
+    }
+    
+    if (typeof sessionStartTimestamp !== 'undefined' && typeof sessionStartTimestamp === 'number') {
+        timerInterval = setInterval(updateTimer, 1000);
+        updateTimer(); // Initial call
+    }
+
+    // --- Video Controls ---
+    const muteBtn = document.getElementById('muteBtn');
+    const videoToggleBtn = document.getElementById('videoToggleBtn');
+    let isMuted = false;
+    let isVideoOff = false;
+
+    function setupVideoControls() {
+        if (muteBtn && localStream) {
+            muteBtn.style.display = 'inline-block';
+            muteBtn.addEventListener('click', () => {
+                isMuted = !isMuted;
+                localStream.getAudioTracks().forEach(track => {
+                    track.enabled = !isMuted;
+                });
+                muteBtn.innerHTML = isMuted ? '<i class="fas fa-microphone-slash"></i>' : '<i class="fas fa-microphone"></i>';
+                muteBtn.classList.toggle('btn-danger', isMuted);
+                muteBtn.classList.toggle('btn-outline-light', !isMuted);
+            });
+        }
+
+        if (videoToggleBtn && localStream) {
+            videoToggleBtn.style.display = 'inline-block';
+            videoToggleBtn.addEventListener('click', () => {
+                isVideoOff = !isVideoOff;
+                localStream.getVideoTracks().forEach(track => {
+                    track.enabled = !isVideoOff;
+                });
+                videoToggleBtn.innerHTML = isVideoOff ? '<i class="fas fa-video-slash"></i>' : '<i class="fas fa-video"></i>';
+                videoToggleBtn.classList.toggle('btn-danger', isVideoOff);
+                videoToggleBtn.classList.toggle('btn-outline-light', !isVideoOff);
+            });
+        }
+    }
+
+    // Store original startCall function and wrap it to setup video controls
+    const originalStartCallFunction = startCall;
+    window.startCall = async function() {
+        await originalStartCallFunction();
+        setTimeout(setupVideoControls, 500);
+    }
+
+    // --- Notes Templates ---
+    const templates = {
+        routine: "Patient presents for routine checkup. General appearance: well-appearing. Vital signs stable. Physical examination unremarkable. Assessment: Healthy. Plan: Continue current care, routine follow-up in 1 year.",
+        followup: "Follow-up visit for [condition]. Patient reports [improvement/no change/worsening]. Examination findings: [findings]. Assessment: [diagnosis]. Plan: [treatment plan].",
+        prescription: "Medication review completed. Current medications: [list]. No new medications required. Continue current regimen. Patient counseled on medication compliance and side effects."
     };
 
+    document.querySelectorAll('.template-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const template = templates[this.dataset.template];
+            const textarea = document.getElementById('notesTextarea');
+            if (textarea && template) {
+                textarea.value = template;
+                updateCharCount();
+                if (typeof showToast !== 'undefined') {
+                    showToast('Template loaded. Please customize as needed.', 'info');
+                }
+            }
+        });
+    });
+
+    // --- Notes Character Counter ---
+    const notesTextarea = document.getElementById('notesTextarea');
+    const notesCharCount = document.getElementById('notesCharCount');
+    
+    function updateCharCount() {
+        if (notesTextarea && notesCharCount) {
+            const count = notesTextarea.value.length;
+            notesCharCount.textContent = count + ' characters';
+            notesCharCount.classList.toggle('text-danger', count > 2000);
+        }
+    }
+    
+    if (notesTextarea) {
+        notesTextarea.addEventListener('input', updateCharCount);
+        updateCharCount();
+    }
+
+    // --- Vital Signs ---
+    function saveVitals() {
+        const bp = document.getElementById('vitalBP').value;
+        const temp = document.getElementById('vitalTemp').value;
+        const pulse = document.getElementById('vitalPulse').value;
+        const o2 = document.getElementById('vitalO2').value;
+        
+        if (!bp && !temp && !pulse && !o2) {
+            if (typeof showToast !== 'undefined') {
+                showToast('Please enter at least one vital sign', 'warning');
+            }
+            return;
+        }
+        
+        let vitalsText = 'Vital Signs:\n';
+        if (bp) vitalsText += `BP: ${bp} mmHg\n`;
+        if (temp) vitalsText += `Temperature: ${temp}°F\n`;
+        if (pulse) vitalsText += `Pulse: ${pulse} bpm\n`;
+        if (o2) vitalsText += `O2 Saturation: ${o2}%\n`;
+        
+        const textarea = document.getElementById('notesTextarea');
+        if (textarea) {
+            const currentNotes = textarea.value;
+            textarea.value = currentNotes ? currentNotes + '\n\n' + vitalsText : vitalsText;
+            updateCharCount();
+            if (typeof showToast !== 'undefined') {
+                showToast('Vital signs added to notes', 'success');
+            }
+        }
+    }
+
+    // --- Prescription Management ---
+    let prescriptions = [];
+    
+    function addPrescription() {
+        const med = document.getElementById('prescriptionMed').value;
+        const dose = document.getElementById('prescriptionDose').value;
+        const freq = document.getElementById('prescriptionFreq').value;
+        const duration = document.getElementById('prescriptionDuration').value;
+        
+        if (!med) {
+            if (typeof showToast !== 'undefined') {
+                showToast('Please enter medication name', 'warning');
+            }
+            return;
+        }
+        
+        const prescription = {
+            med: med,
+            dose: dose || 'As directed',
+            freq: freq || 'As needed',
+            duration: duration || 'Until finished'
+        };
+        
+        prescriptions.push(prescription);
+        updatePrescriptionList();
+        
+        // Clear inputs
+        document.getElementById('prescriptionMed').value = '';
+        document.getElementById('prescriptionDose').value = '';
+        document.getElementById('prescriptionFreq').value = '';
+        document.getElementById('prescriptionDuration').value = '';
+        
+        if (typeof showToast !== 'undefined') {
+            showToast('Prescription added', 'success');
+        }
+    }
+    
+    function updatePrescriptionList() {
+        const list = document.getElementById('prescriptionList');
+        if (!list) return;
+        
+        if (prescriptions.length === 0) {
+            list.innerHTML = '<small class="text-muted">No prescriptions added</small>';
+            return;
+        }
+        
+        list.innerHTML = prescriptions.map((p, idx) => `
+            <div class="border rounded p-2 mb-2 small">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <strong>${p.med}</strong><br>
+                        <span class="text-muted">${p.dose} - ${p.freq} - ${p.duration}</span>
+                    </div>
+                    <button class="btn btn-sm btn-link text-danger p-0" onclick="removePrescription(${idx})" title="Remove">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    function removePrescription(idx) {
+        prescriptions.splice(idx, 1);
+        updatePrescriptionList();
+    }
+    
+    function copyPrescriptionToNotes() {
+        if (prescriptions.length === 0) {
+            if (typeof showToast !== 'undefined') {
+                showToast('No prescriptions to copy', 'warning');
+            }
+            return;
+        }
+        
+        let prescriptionText = 'Prescriptions:\n';
+        prescriptions.forEach((p, idx) => {
+            prescriptionText += `${idx + 1}. ${p.med} - ${p.dose}, ${p.freq}, ${p.duration}\n`;
+        });
+        
+        const textarea = document.getElementById('notesTextarea');
+        if (textarea) {
+            const currentNotes = textarea.value;
+            textarea.value = currentNotes ? currentNotes + '\n\n' + prescriptionText : prescriptionText;
+            updateCharCount();
+            if (typeof showToast !== 'undefined') {
+                showToast('Prescriptions copied to notes', 'success');
+            }
+        }
+    }
+    
+    // Make functions global
+    window.removePrescription = removePrescription;
+    window.addPrescription = addPrescription;
+    window.copyPrescriptionToNotes = copyPrescriptionToNotes;
+    window.saveVitals = saveVitals;
+
+    // --- File Upload ---
+    let uploadedFiles = [];
+    
+    function uploadFile() {
+        const fileInput = document.getElementById('fileUpload');
+        if (!fileInput || !fileInput.files.length) {
+            if (typeof showToast !== 'undefined') {
+                showToast('Please select a file to upload', 'warning');
+            }
+            return;
+        }
+        
+        Array.from(fileInput.files).forEach(file => {
+            const fileObj = {
+                name: file.name,
+                size: file.size,
+                type: file.type,
+                file: file
+            };
+            uploadedFiles.push(fileObj);
+        });
+        
+        updateFileList();
+        fileInput.value = '';
+        
+        if (typeof showToast !== 'undefined') {
+            showToast(`Added ${fileInput.files.length} file(s) to consultation`, 'success');
+        }
+    }
+    
+    function updateFileList() {
+        const list = document.getElementById('fileList');
+        if (!list) return;
+        
+        if (uploadedFiles.length === 0) {
+            list.innerHTML = '<small class="text-muted">No files uploaded</small>';
+            return;
+        }
+        
+        list.innerHTML = uploadedFiles.map((f, idx) => `
+            <div class="border rounded p-2 mb-2 small d-flex justify-content-between align-items-center">
+                <div>
+                    <i class="fas fa-file me-1"></i>
+                    <strong>${f.name}</strong>
+                    <small class="text-muted">(${(f.size / 1024).toFixed(1)} KB)</small>
+                </div>
+                <button class="btn btn-sm btn-link text-danger p-0" onclick="removeFile(${idx})" title="Remove">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        `).join('');
+    }
+    
+    function removeFile(idx) {
+        uploadedFiles.splice(idx, 1);
+        updateFileList();
+    }
+    
+    window.uploadFile = uploadFile;
+    window.removeFile = removeFile;
+    updateFileList();
+
+    // --- Actions Log ---
+    let actionsLog = [];
+    
+    function logAction(actionText) {
+        const timestamp = new Date().toLocaleTimeString();
+        actionsLog.push({
+            time: timestamp,
+            action: actionText
+        });
+        
+        updateActionsLog();
+        
+        // Also add to notes if doctor wants
+        const textarea = document.getElementById('notesTextarea');
+        if (textarea) {
+            const currentNotes = textarea.value;
+            const actionNote = `[${timestamp}] ${actionText}`;
+            textarea.value = currentNotes ? currentNotes + '\n' + actionNote : actionNote;
+            updateCharCount();
+        }
+        
+        if (typeof showToast !== 'undefined') {
+            showToast('Action logged', 'success');
+        }
+    }
+    
+    function updateActionsLog() {
+        const log = document.getElementById('actionsLog');
+        if (!log) return;
+        
+        if (actionsLog.length === 0) {
+            log.innerHTML = '<div class="text-muted text-center">No actions recorded yet</div>';
+            return;
+        }
+        
+        log.innerHTML = actionsLog.map(a => `
+            <div class="border-start border-primary ps-2 mb-2 small">
+                <div class="text-muted">${a.time}</div>
+                <div>${a.action}</div>
+            </div>
+        `).join('');
+    }
+    
+    window.logAction = logAction;
+    
+    // Log initial action
+    if (userRole === 'doctor') {
+        logAction('Consultation session started');
+    }
 </script>
+
 {% endblock %}

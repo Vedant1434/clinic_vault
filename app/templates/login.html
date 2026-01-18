@@ -12,8 +12,16 @@
                 <small class="text-muted">Secure access for authorized users</small>
             </div>
 
+            <!-- Error Alert -->
+            {% if error %}
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <i class="fas fa-exclamation-circle me-2"></i>{{ error }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+            {% endif %}
+
             <!-- Login Form -->
-            <form action="/auth/login" method="post">
+            <form id="loginForm" action="/auth/login" method="post">
                 <div class="mb-3">
                     <label class="form-label">Email Address</label>
                     <div class="input-group">
@@ -21,6 +29,7 @@
                         <input
                             type="email"
                             name="username"
+                            id="username"
                             class="form-control"
                             placeholder="Email Address"
                             required
@@ -35,6 +44,7 @@
                         <input
                             type="password"
                             name="password"
+                            id="password"
                             class="form-control"
                             placeholder="Password"
                             required
@@ -46,6 +56,33 @@
                     <i class="fas fa-shield-alt me-1"></i> Secure Login
                 </button>
             </form>
+
+            <script>
+                // Handle form submission with AJAX for better error handling
+                document.getElementById('loginForm').addEventListener('submit', async function(e) {
+                    e.preventDefault();
+                    
+                    const formData = new FormData(this);
+                    const response = await fetch('/auth/login', {
+                        method: 'POST',
+                        body: formData,
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        window.location.href = '/dashboard';
+                    } else {
+                        const data = await response.json();
+                        if (typeof showToast !== 'undefined') {
+                            showToast(data.error || data.detail || 'Login failed. Please try again.', 'error');
+                        } else {
+                            alert('Error: ' + (data.error || data.detail || 'Login failed. Please try again.'));
+                        }
+                    }
+                });
+            </script>
 
             <!-- Links -->
             <div class="text-center mt-3">

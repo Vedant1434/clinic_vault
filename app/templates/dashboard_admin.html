@@ -16,6 +16,22 @@
             </div>
 
             <div class="card-body">
+                <!-- Error Alert -->
+                {% if error %}
+                <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                    <i class="fas fa-exclamation-circle me-2"></i>{{ error }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+                {% endif %}
+
+                <!-- Success Alert -->
+                {% if success %}
+                <div class="alert alert-success alert-dismissible fade show" role="alert">
+                    <i class="fas fa-check-circle me-2"></i>{{ success }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+                {% endif %}
+
                 <div class="row g-4">
 
                     <!-- ================= ADD DOCTOR ================= -->
@@ -25,7 +41,7 @@
                             Add New Doctor
                         </h6>
 
-                        <form action="/admin/add_doctor"
+                        <form id="addDoctorForm" action="/admin/add_doctor"
                               method="post"
                               class="border p-3 rounded bg-light">
 
@@ -62,11 +78,64 @@
                                 </select>
                             </div>
 
-                            <button class="btn btn-primary btn-sm w-100">
+                            <button type="submit" class="btn btn-primary btn-sm w-100">
                                 <i class="fas fa-stethoscope me-1"></i>
                                 Onboard Doctor
                             </button>
                         </form>
+
+                        <script>
+                            // Handle form submission with better error handling
+                            document.getElementById('addDoctorForm').addEventListener('submit', async function(e) {
+                                e.preventDefault();
+                                
+                                const formData = new FormData(this);
+                                const submitBtn = this.querySelector('button[type="submit"]');
+                                const originalText = submitBtn.innerHTML;
+                                
+                                submitBtn.disabled = true;
+                                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Adding...';
+                                
+                                try {
+                                    const response = await fetch('/admin/add_doctor', {
+                                        method: 'POST',
+                                        body: formData,
+                                        headers: {
+                                            'Accept': 'application/json'
+                                        }
+                                    });
+                                    
+                                    const data = await response.json();
+                                    
+                                    if (response.ok && data.success) {
+                                        if (typeof showToast !== 'undefined') {
+                                            showToast('Doctor added successfully!', 'success');
+                                        } else {
+                                            alert('Doctor added successfully!');
+                                        }
+                                        setTimeout(() => window.location.reload(), 1500);
+                                    } else {
+                                        const errorMsg = data.error || 'Failed to add doctor. Please try again.';
+                                        if (typeof showToast !== 'undefined') {
+                                            showToast('Error: ' + errorMsg, 'error');
+                                        } else {
+                                            alert('Error: ' + errorMsg);
+                                        }
+                                        submitBtn.disabled = false;
+                                        submitBtn.innerHTML = originalText;
+                                    }
+                                } catch (error) {
+                                    console.error('Error:', error);
+                                    if (typeof showToast !== 'undefined') {
+                                        showToast('Error adding doctor. Please try again.', 'error');
+                                    } else {
+                                        alert('Error adding doctor. Please try again.');
+                                    }
+                                    submitBtn.disabled = false;
+                                    submitBtn.innerHTML = originalText;
+                                }
+                            });
+                        </script>
                     </div>
 
                     <!-- ================= DOCTOR STATUS ================= -->
@@ -83,6 +152,7 @@
                                         <th>Name</th>
                                         <th>Specialty</th>
                                         <th>Status</th>
+                                        <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -103,11 +173,63 @@
                                                 {{ doc.status | upper }}
                                             </span>
                                         </td>
+                                        <td>
+                                            <button class="btn btn-danger btn-sm" 
+                                                    onclick="removeDoctor({{ doc.id }}, '{{ doc.full_name }}')"
+                                                    title="Remove Doctor">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>
                             </table>
                         </div>
+                        
+                        <script>
+                            function removeDoctor(doctorId, doctorName) {
+                                if (!confirm(`Are you sure you want to remove Dr. ${doctorName}? This action cannot be undone.`)) {
+                                    return;
+                                }
+                                
+                                const formData = new FormData();
+                                formData.append('doctor_id', doctorId);
+                                
+                                fetch('/admin/remove_doctor', {
+                                    method: 'POST',
+                                    body: formData,
+                                    headers: {
+                                        'Accept': 'application/json'
+                                    }
+                                })
+                                .then(response => response.json())
+                                .then(data => {
+                                    if (data.success) {
+                                        if (typeof showToast !== 'undefined') {
+                                            showToast(data.message || 'Doctor removed successfully!', 'success');
+                                        } else {
+                                            alert(data.message || 'Doctor removed successfully!');
+                                        }
+                                        setTimeout(() => window.location.reload(), 1500);
+                                    } else {
+                                        const errorMsg = data.error || 'Failed to remove doctor.';
+                                        if (typeof showToast !== 'undefined') {
+                                            showToast('Error: ' + errorMsg, 'error');
+                                        } else {
+                                            alert('Error: ' + errorMsg);
+                                        }
+                                    }
+                                })
+                                .catch(error => {
+                                    console.error('Error:', error);
+                                    if (typeof showToast !== 'undefined') {
+                                        showToast('Error removing doctor. Please try again.', 'error');
+                                    } else {
+                                        alert('Error removing doctor. Please try again.');
+                                    }
+                                });
+                            }
+                        </script>
                     </div>
 
                 </div>
@@ -120,11 +242,14 @@
 <div class="row">
     <div class="col-12">
         <div class="card">
-            <div class="card-header bg-white">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">
                     <i class="fas fa-history me-1"></i>
                     System-Wide Privacy Log
                 </h5>
+                <button class="btn btn-danger btn-sm" onclick="deleteAllLogs()" title="Delete All Logs">
+                    <i class="fas fa-trash me-1"></i>Delete All Logs
+                </button>
             </div>
 
             <div class="card-body p-0"
@@ -139,6 +264,7 @@
                                 <th>Action</th>
                                 <th>Target</th>
                                 <th>Purpose</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -149,6 +275,13 @@
                                 <td>{{ log.action }}</td>
                                 <td>{{ log.target_data }}</td>
                                 <td>{{ log.purpose }}</td>
+                                <td>
+                                    <button class="btn btn-danger btn-sm" 
+                                            onclick="deleteLog({{ log.id }})"
+                                            title="Delete Log">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -159,5 +292,104 @@
         </div>
     </div>
 </div>
+
+<script>
+    function deleteLog(logId) {
+        const confirmMessage = 'Are you sure you want to delete this log entry? This action cannot be undone.';
+        
+        if (typeof showConfirm !== 'undefined') {
+            showConfirm(confirmMessage, function() {
+                proceedDeleteLog(logId);
+            });
+        } else {
+            if (confirm(confirmMessage)) {
+                proceedDeleteLog(logId);
+            }
+        }
+    }
+    
+    function proceedDeleteLog(logId) {
+        const formData = new FormData();
+        formData.append('log_ids', logId.toString());
+        
+        fetch('/admin/delete_logs', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'Accept': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                if (typeof showToast !== 'undefined') {
+                    showToast(data.message || 'Log deleted successfully!', 'success');
+                }
+                setTimeout(() => window.location.reload(), 1500);
+            } else {
+                const errorMsg = data.error || 'Failed to delete log.';
+                if (typeof showToast !== 'undefined') {
+                    showToast('Error: ' + errorMsg, 'error');
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            if (typeof showToast !== 'undefined') {
+                showToast('Error deleting log. Please try again.', 'error');
+            }
+        });
+    }
+    
+    function deleteAllLogs() {
+        const confirmMessage = 'Are you sure you want to delete ALL log entries? This action cannot be undone and will clear the entire audit trail.';
+        const finalWarning = 'This is your final warning. All privacy logs will be permanently deleted. Continue?';
+        
+        if (typeof showConfirm !== 'undefined') {
+            showConfirm(confirmMessage, function() {
+                showConfirm(finalWarning, function() {
+                    proceedDeleteAllLogs();
+                });
+            });
+        } else {
+            if (confirm(confirmMessage) && confirm(finalWarning)) {
+                proceedDeleteAllLogs();
+            }
+        }
+    }
+    
+    function proceedDeleteAllLogs() {
+        const formData = new FormData();
+        // Empty log_ids means delete all
+        
+        fetch('/admin/delete_logs', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'Accept': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                if (typeof showToast !== 'undefined') {
+                    showToast(data.message || 'All logs deleted successfully!', 'success');
+                }
+                setTimeout(() => window.location.reload(), 1500);
+            } else {
+                const errorMsg = data.error || 'Failed to delete logs.';
+                if (typeof showToast !== 'undefined') {
+                    showToast('Error: ' + errorMsg, 'error');
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            if (typeof showToast !== 'undefined') {
+                showToast('Error deleting logs. Please try again.', 'error');
+            }
+        });
+    }
+</script>
 
 {% endblock %}

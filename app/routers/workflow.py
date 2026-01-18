@@ -3,13 +3,14 @@ import os
 import json
 import uuid
 from typing import List, Dict
+from datetime import datetime
 from fastapi import APIRouter, Depends, Form, Request, WebSocket, WebSocketDisconnect, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from sqlmodel import Session, select, or_
 
 from app.database import get_db
 from app.models import User, Consultation, ConsultationStatus, DoctorStatus, UserRole, PrivacyLog
-from app.security import get_current_user, encrypt_phi, decrypt_phi, audit_log
+from app.security import get_current_user, get_current_user_from_token, encrypt_phi, decrypt_phi, audit_log
 from app.templates import render_template
 from app.transcription import transcribe_audio_chunk
 
@@ -19,10 +20,11 @@ router = APIRouter()
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, session: Session = Depends(get_db)):
     token = request.cookies.get("access_token")
-    if not token: return RedirectResponse("/")
+    if not token: 
+        return RedirectResponse("/")
     try:
-        user = await get_current_user(token, session)
-    except:
+        user = await get_current_user_from_token(token, session)
+    except Exception as e:
         return RedirectResponse("/")
 
     if user.role == UserRole.ADMIN:
@@ -58,7 +60,7 @@ async def start_triage(
     session: Session = Depends(get_db)
 ):
     token = request.cookies.get("access_token")
-    user = await get_current_user(token, session)
+    user = await get_current_user_from_token(token, session)
     
     doctor = session.exec(select(User).where(
         User.role == UserRole.DOCTOR,
@@ -67,7 +69,20 @@ async def start_triage(
     )).first()
     
     if not doctor:
-        return HTMLResponse(f"<h3>No {specialty} doctors online. Please try again later.</h3><a href='/dashboard'>Back</a>")
+        # Return JSON response for AJAX handling
+        if request.headers.get("accept") == "application/json":
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"No {specialty} doctors are currently available. Please try again later."}
+            )
+        # Return HTML with error message
+        return render_template("dashboard_patient", {
+            "request": request,
+            "user": user,
+            "active_consultation": None,
+            "logs": [],
+            "error": f"No {specialty} doctors are currently available. Please try again later."
+        })
     
     doctor.status = DoctorStatus.BUSY
     session.add(doctor)
@@ -93,20 +108,77 @@ async def start_triage(
 @router.get("/billing/{consult_id}", response_class=HTMLResponse)
 async def billing_page(request: Request, consult_id: int, session: Session = Depends(get_db)):
     token = request.cookies.get("access_token")
-    user = await get_current_user(token, session)
-    consult = session.get(Consultation, consult_id)
+    if not token:
+        return RedirectResponse("/")
     
-    if not consult or consult.patient_id != user.id: return RedirectResponse("/dashboard")
+    try:
+        user = await get_current_user_from_token(token, session)
+    except Exception:
+        return RedirectResponse("/")
+    
+    consult = session.get(Consultation, consult_id)
+    if not consult:
+        return render_template("dashboard_patient", {
+            "request": request,
+            "user": user,
+            "active_consultation": None,
+            "logs": [],
+            "error": "Consultation not found."
+        })
+    
+    if consult.patient_id != user.id:
+        return HTMLResponse("Unauthorized Access", status_code=403)
+    
     doctor = session.get(User, consult.doctor_id)
-    return render_template("billing", {"request": request, "user": user, "consultation": consult, "doctor_name": doctor.full_name})
+    if not doctor:
+        return render_template("dashboard_patient", {
+            "request": request,
+            "user": user,
+            "active_consultation": consult,
+            "logs": [],
+            "error": "Doctor information not found."
+        })
+    
+    return render_template("billing", {
+        "request": request,
+        "user": user,
+        "consultation": consult,
+        "doctor_name": doctor.full_name
+    })
 
 @router.post("/billing/process")
-async def process_payment(consultation_id: int = Form(...), outcome: str = Form(...), session: Session = Depends(get_db)):
+async def process_payment(
+    request: Request,
+    consultation_id: int = Form(...),
+    outcome: str = Form(...),
+    session: Session = Depends(get_db)
+):
+    token = request.cookies.get("access_token")
+    if not token:
+        return RedirectResponse("/")
+    
+    try:
+        user = await get_current_user_from_token(token, session)
+    except Exception:
+        return RedirectResponse("/")
+    
     consult = session.get(Consultation, consultation_id)
+    if not consult:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Consultation not found"}
+        ) if request.headers.get("accept") == "application/json" else RedirectResponse("/dashboard")
+    
     doctor = session.get(User, consult.doctor_id)
+    if not doctor:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Doctor not found"}
+        ) if request.headers.get("accept") == "application/json" else RedirectResponse("/dashboard")
     
     if outcome == "success":
         consult.status = ConsultationStatus.ACTIVE
+        consult.started_at = datetime.utcnow()
         audit_log(session, doctor, "Authorized Access", "Medical Record", "Payment Confirmed", consult.id)
     else:
         consult.status = ConsultationStatus.CANCELLED
@@ -121,15 +193,29 @@ async def process_payment(consultation_id: int = Form(...), outcome: str = Form(
 @router.get("/consultation/{consult_id}", response_class=HTMLResponse)
 async def consultation_room(request: Request, consult_id: int, session: Session = Depends(get_db)):
     token = request.cookies.get("access_token")
-    user = await get_current_user(token, session)
+    if not token:
+        return RedirectResponse("/")
+    
+    try:
+        user = await get_current_user_from_token(token, session)
+    except Exception:
+        return RedirectResponse("/")
+    
     consult = session.get(Consultation, consult_id)
+    if not consult:
+        return RedirectResponse("/dashboard")
     
-    if user.id not in [consult.patient_id, consult.doctor_id]: return HTMLResponse("Unauthorized Access", status_code=403)
-    if consult.status != ConsultationStatus.ACTIVE: return RedirectResponse("/dashboard")
+    if user.id not in [consult.patient_id, consult.doctor_id]: 
+        return HTMLResponse("Unauthorized Access", status_code=403)
+    if consult.status != ConsultationStatus.ACTIVE: 
+        return RedirectResponse("/dashboard")
     
-    symptoms = decrypt_phi(consult.symptoms_enc)
+    # Decrypt symptoms with error handling
+    symptoms = decrypt_phi(consult.symptoms_enc) if consult.symptoms_enc else ""
+    if not symptoms:
+        symptoms = "Unable to decrypt symptoms data."
     
-    # Fetch History (Previous Consultations)
+    # Fetch History (Previous Consultations) - ONLY for doctors
     history = []
     if user.role == UserRole.DOCTOR:
         prev_consults = session.exec(select(Consultation).where(
@@ -140,12 +226,41 @@ async def consultation_room(request: Request, consult_id: int, session: Session 
         
         for pc in prev_consults:
             doc = session.get(User, pc.doctor_id)
+            patient = session.get(User, pc.patient_id)
+            
+            # Decrypt with better error handling (decrypt_phi now returns empty string on error)
+            symptoms_dec = decrypt_phi(pc.symptoms_enc) if pc.symptoms_enc else ""
+            notes_dec = decrypt_phi(pc.notes_enc) if pc.notes_enc else ""
+            transcript_dec = decrypt_phi(pc.transcript_enc) if pc.transcript_enc else None
+            
+            # If decryption failed (empty string), show user-friendly message
+            # This can happen if encryption key changed or data is corrupted
+            if not symptoms_dec:
+                symptoms_dec = "Unable to decrypt symptoms data. This may occur if the data was encrypted with a different key."
+            if not notes_dec:
+                notes_dec = "Unable to decrypt clinical notes. This may occur if the data was encrypted with a different key."
+            if not transcript_dec:
+                transcript_dec = None
+            
             history.append({
-                "date": pc.created_at.strftime("%Y-%m-%d"),
-                "doctor": doc.full_name if doc else "Unknown",
+                "id": pc.id,
+                "date": pc.created_at.strftime("%Y-%m-%d %H:%M"),
+                "doctor": doc.full_name if doc else "Unknown Doctor",
+                "doctor_specialty": doc.specialty if doc else "Unknown",
+                "patient": patient.full_name if patient else "Unknown Patient",
                 "specialty": pc.specialty,
-                "notes": decrypt_phi(pc.notes_enc) if pc.notes_enc else "No notes."
+                "symptoms": symptoms_dec if symptoms_dec else "No symptoms recorded.",
+                "notes": notes_dec if notes_dec else "No clinical notes recorded.",
+                "transcript": transcript_dec
             })
+    
+    # Get current doctor and patient info
+    current_doctor = session.get(User, consult.doctor_id)
+    current_patient = session.get(User, consult.patient_id)
+    
+    # Calculate session start timestamp for timer
+    session_start = consult.started_at if consult.started_at else consult.created_at
+    session_start_timestamp = int(session_start.timestamp() * 1000) if session_start else None
 
     audit_log(session, user, "Entered Secure Room", "Video Stream", "Consultation", consult.id)
     return render_template("consultation", {
@@ -153,37 +268,241 @@ async def consultation_room(request: Request, consult_id: int, session: Session 
         "user": user, 
         "consultation": consult, 
         "symptoms_decrypted": symptoms,
-        "history": history
+        "history": history,
+        "current_doctor": current_doctor,
+        "current_patient": current_patient,
+        "session_start_timestamp": session_start_timestamp
     })
 
 @router.post("/consultation/notes")
 async def save_notes(request: Request, consultation_id: int = Form(...), notes: str = Form(...), session: Session = Depends(get_db)):
     token = request.cookies.get("access_token")
-    user = await get_current_user(token, session)
-    consult = session.get(Consultation, consultation_id)
+    if not token:
+        return RedirectResponse("/")
     
-    if user.role != UserRole.DOCTOR: return HTMLResponse("Only doctors can save notes")
+    try:
+        user = await get_current_user_from_token(token, session)
+    except Exception:
+        return RedirectResponse("/")
+    
+    consult = session.get(Consultation, consultation_id)
+    if not consult:
+        return RedirectResponse("/dashboard")
+    
+    if user.role != UserRole.DOCTOR:
+        return HTMLResponse("Only doctors can save notes", status_code=403)
+    
+    if user.id != consult.doctor_id:
+        return HTMLResponse("Unauthorized: You are not the assigned doctor", status_code=403)
+    
     consult.notes_enc = encrypt_phi(notes)
     session.add(consult)
     session.commit()
     audit_log(session, user, "Appended Clinical Notes", "Medical Record", "Documentation", consult.id)
     return RedirectResponse(f"/consultation/{consultation_id}", status_code=303)
 
+# --- Transfer Consultation ---
+@router.get("/consultation/{consult_id}/available-doctors", response_class=JSONResponse)
+async def get_available_doctors(request: Request, consult_id: int, session: Session = Depends(get_db)):
+    """Get list of available doctors for transfer"""
+    token = request.cookies.get("access_token")
+    if not token:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    
+    try:
+        user = await get_current_user_from_token(token, session)
+    except Exception:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    
+    consult = session.get(Consultation, consult_id)
+    if not consult:
+        return JSONResponse(status_code=404, content={"error": "Consultation not found"})
+    
+    # Only current doctor can see available doctors for transfer
+    if user.id != consult.doctor_id or user.role != UserRole.DOCTOR:
+        return JSONResponse(status_code=403, content={"error": "Only the assigned doctor can transfer"})
+    
+    # Get all doctors except the current one
+    all_doctors = session.exec(select(User).where(
+        User.role == UserRole.DOCTOR,
+        User.id != consult.doctor_id
+    )).all()
+    
+    # Debug: Log all doctors found
+    print(f"DEBUG: Found {len(all_doctors)} doctors (excluding current doctor {consult.doctor_id})")
+    
+    # Filter to show ONLINE and OFFLINE doctors (exclude BUSY and None)
+    available_doctors = []
+    for doc in all_doctors:
+        # Handle None status
+        if doc.status is None:
+            print(f"DEBUG: Doctor {doc.id} ({doc.full_name}) has None status, treating as OFFLINE")
+            available_doctors.append(doc)
+            continue
+            
+        # Handle both enum and string status
+        if hasattr(doc.status, 'value'):
+            status_value = doc.status.value
+        elif isinstance(doc.status, str):
+            status_value = doc.status
+        else:
+            status_value = str(doc.status)
+        
+        status_lower = status_value.lower() if isinstance(status_value, str) else str(status_value).lower()
+        
+        print(f"DEBUG: Doctor {doc.id} ({doc.full_name}) has status: {status_value} (lower: {status_lower})")
+        
+        # Include ONLINE and OFFLINE doctors, exclude BUSY
+        if status_lower in ['online', 'offline']:
+            available_doctors.append(doc)
+            print(f"DEBUG: Doctor {doc.id} ({doc.full_name}) added to available list")
+        else:
+            print(f"DEBUG: Doctor {doc.id} ({doc.full_name}) excluded (status: {status_lower})")
+    
+    doctors_list = [
+        {
+            "id": doc.id,
+            "name": doc.full_name,
+            "specialty": doc.specialty or "General",
+            "status": (doc.status.value if hasattr(doc.status, 'value') else str(doc.status)) if doc.status else "offline"
+        }
+        for doc in available_doctors
+    ]
+    
+    print(f"DEBUG: Returning {len(doctors_list)} available doctors")
+    
+    return JSONResponse(content={"doctors": doctors_list})
+
+@router.post("/consultation/transfer")
+async def transfer_consultation(
+    request: Request,
+    consultation_id: int = Form(...),
+    new_doctor_id: int = Form(...),
+    reason: str = Form(None),
+    session: Session = Depends(get_db)
+):
+    """Transfer consultation to another doctor"""
+    token = request.cookies.get("access_token")
+    if not token:
+        return RedirectResponse("/")
+    
+    try:
+        user = await get_current_user_from_token(token, session)
+    except Exception:
+        return RedirectResponse("/")
+    
+    consult = session.get(Consultation, consultation_id)
+    if not consult:
+        if request.headers.get("accept") == "application/json":
+            return JSONResponse(status_code=404, content={"error": "Consultation not found"})
+        return RedirectResponse("/dashboard")
+    
+    # Only the current doctor can transfer
+    if user.id != consult.doctor_id or user.role != UserRole.DOCTOR:
+        if request.headers.get("accept") == "application/json":
+            return JSONResponse(status_code=403, content={"error": "Only the assigned doctor can transfer"})
+        return HTMLResponse("Unauthorized", status_code=403)
+    
+    # Check if consultation is active
+    if consult.status != ConsultationStatus.ACTIVE:
+        if request.headers.get("accept") == "application/json":
+            return JSONResponse(status_code=400, content={"error": "Can only transfer active consultations"})
+        return RedirectResponse(f"/consultation/{consultation_id}")
+    
+    # Get new doctor
+    new_doctor = session.get(User, new_doctor_id)
+    if not new_doctor or new_doctor.role != UserRole.DOCTOR:
+        if request.headers.get("accept") == "application/json":
+            return JSONResponse(status_code=404, content={"error": "Doctor not found"})
+        return RedirectResponse(f"/consultation/{consultation_id}")
+    
+    # Check if new doctor is available (must be ONLINE or OFFLINE, not BUSY)
+    # Handle both enum and string comparison for status
+    doctor_status = new_doctor.status
+    if isinstance(doctor_status, str):
+        try:
+            doctor_status = DoctorStatus(doctor_status.lower())
+        except ValueError:
+            pass
+    
+    status_value = doctor_status.value if hasattr(doctor_status, 'value') else str(doctor_status)
+    status_lower = status_value.lower() if isinstance(status_value, str) else str(status_value).lower()
+    
+    # Allow transfer to ONLINE or OFFLINE doctors, but not BUSY ones
+    if status_lower == 'busy':
+        error_msg = f"Selected doctor ({new_doctor.full_name}) is currently busy with another patient. Current status: {status_value}"
+        if request.headers.get("accept") == "application/json":
+            return JSONResponse(status_code=400, content={"error": error_msg})
+        return RedirectResponse(f"/consultation/{consultation_id}")
+    
+    # Get old doctor
+    old_doctor = session.get(User, consult.doctor_id)
+    
+    # Transfer consultation
+    old_doctor_id = consult.doctor_id
+    consult.doctor_id = new_doctor_id
+    consult.updated_at = datetime.utcnow()
+    
+    # Update doctor statuses
+    # Old doctor becomes available again
+    old_doctor.status = DoctorStatus.ONLINE
+    # New doctor becomes busy (even if they were offline, they're now taking the consultation)
+    new_doctor.status = DoctorStatus.BUSY
+    
+    session.add(consult)
+    session.add(old_doctor)
+    session.add(new_doctor)
+    session.commit()
+    
+    # Audit log
+    transfer_reason = reason or "Emergency transfer"
+    audit_log(session, user, f"Transferred Patient", f"From Dr. {old_doctor.full_name} to Dr. {new_doctor.full_name}", f"Transfer: {transfer_reason}", consult.id)
+    audit_log(session, new_doctor, "Received Patient Transfer", f"Patient consultation #{consultation_id}", "Patient Care", consult.id)
+    
+    if request.headers.get("accept") == "application/json":
+        return JSONResponse(content={
+            "success": True,
+            "message": f"Patient transferred to Dr. {new_doctor.full_name}",
+            "new_consultation_url": f"/consultation/{consultation_id}"
+        })
+    
+    return RedirectResponse(f"/consultation/{consultation_id}", status_code=303)
+
 @router.get("/consultation/end/{consult_id}")
 async def end_consultation(request: Request, consult_id: int, session: Session = Depends(get_db)):
+    token = request.cookies.get("access_token")
+    if not token:
+        return RedirectResponse("/")
+    
+    try:
+        user = await get_current_user_from_token(token, session)
+    except Exception:
+        return RedirectResponse("/")
+    
     consult = session.get(Consultation, consult_id)
+    if not consult:
+        return RedirectResponse("/dashboard")
+    
+    # Only doctor or patient can end their own consultation
+    if user.id not in [consult.patient_id, consult.doctor_id]:
+        return HTMLResponse("Unauthorized Access", status_code=403)
+    
     doctor = session.get(User, consult.doctor_id)
-    consult.status = ConsultationStatus.COMPLETED
-    doctor.status = DoctorStatus.ONLINE 
-    session.add(consult)
-    session.add(doctor)
-    session.commit()
+    if doctor:
+        consult.status = ConsultationStatus.COMPLETED
+        consult.ended_at = datetime.utcnow()
+        doctor.status = DoctorStatus.ONLINE
+        session.add(consult)
+        session.add(doctor)
+        session.commit()
+        audit_log(session, user, "Ended Consultation", f"Consultation #{consult_id}", "Session Management", consult_id)
+    
     return RedirectResponse("/dashboard")
 
 @router.get("/doctor/toggle_status")
 async def toggle_status(request: Request, session: Session = Depends(get_db)):
     token = request.cookies.get("access_token")
-    user = await get_current_user(token, session)
+    user = await get_current_user_from_token(token, session)
     if user.role == UserRole.DOCTOR:
         user.status = DoctorStatus.ONLINE if user.status == DoctorStatus.OFFLINE else DoctorStatus.OFFLINE
         session.add(user)
