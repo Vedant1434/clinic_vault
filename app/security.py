@@ -53,6 +53,9 @@ def create_access_token(data: dict):
 
 async def get_current_user_from_token(token: str, session: Session) -> User:
     """Helper function to get user from token string (for cookie-based auth)"""
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+
     if token.startswith("Bearer "):
         token = token[7:]
     try:

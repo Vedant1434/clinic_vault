@@ -60,6 +60,11 @@ async def start_triage(
     session: Session = Depends(get_db)
 ):
     token = request.cookies.get("access_token")
+    if not token:
+        if request.headers.get("accept") == "application/json":
+            return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+        return RedirectResponse("/", status_code=303)
+
     user = await get_current_user_from_token(token, session)
     
     doctor = session.exec(select(User).where(
@@ -127,7 +132,7 @@ async def billing_page(request: Request, consult_id: int, session: Session = Dep
         })
     
     if consult.patient_id != user.id:
-        return HTMLResponse("Unauthorized Access", status_code=403)
+        return RedirectResponse("/dashboard", status_code=303)
     
     doctor = session.get(User, consult.doctor_id)
     if not doctor:
@@ -369,13 +374,12 @@ async def get_available_doctors(request: Request, consult_id: int, session: Sess
     # Debug: Log all doctors found
     print(f"DEBUG: Found {len(all_doctors)} doctors (excluding current doctor {consult.doctor_id})")
     
-    # Filter to show ONLINE and OFFLINE doctors (exclude BUSY and None)
+    # Filter to show only ONLINE doctors (exclude BUSY/OFFLINE/None)
     available_doctors = []
     for doc in all_doctors:
         # Handle None status
         if doc.status is None:
-            print(f"DEBUG: Doctor {doc.id} ({doc.full_name}) has None status, treating as OFFLINE")
-            available_doctors.append(doc)
+            print(f"DEBUG: Doctor {doc.id} ({doc.full_name}) has None status, excluding")
             continue
             
         # Handle both enum and string status
@@ -390,8 +394,8 @@ async def get_available_doctors(request: Request, consult_id: int, session: Sess
         
         print(f"DEBUG: Doctor {doc.id} ({doc.full_name}) has status: {status_value} (lower: {status_lower})")
         
-        # Include ONLINE and OFFLINE doctors, exclude BUSY
-        if status_lower in ['online', 'offline']:
+        # Include ONLINE doctors only
+        if status_lower == 'online':
             available_doctors.append(doc)
             print(f"DEBUG: Doctor {doc.id} ({doc.full_name}) added to available list")
         else:
@@ -454,8 +458,7 @@ async def transfer_consultation(
             return JSONResponse(status_code=404, content={"error": "Doctor not found"})
         return RedirectResponse(f"/consultation/{consultation_id}")
     
-    # Check if new doctor is available (must be ONLINE or OFFLINE, not BUSY)
-    # Handle both enum and string comparison for status
+    # Check if new doctor is available (must be ONLINE)
     doctor_status = new_doctor.status
     if isinstance(doctor_status, str):
         try:
@@ -466,9 +469,9 @@ async def transfer_consultation(
     status_value = doctor_status.value if hasattr(doctor_status, 'value') else str(doctor_status)
     status_lower = status_value.lower() if isinstance(status_value, str) else str(status_value).lower()
     
-    # Allow transfer to ONLINE or OFFLINE doctors, but not BUSY ones
-    if status_lower == 'busy':
-        error_msg = f"Selected doctor ({new_doctor.full_name}) is currently busy with another patient. Current status: {status_value}"
+    # Allow transfer to ONLINE doctors only
+    if status_lower != 'online':
+        error_msg = f"Selected doctor ({new_doctor.full_name}) is not available. Current status: {status_value}"
         if request.headers.get("accept") == "application/json":
             return JSONResponse(status_code=400, content={"error": error_msg})
         return RedirectResponse(f"/consultation/{consultation_id}")
@@ -535,7 +538,7 @@ async def end_consultation(request: Request, consult_id: int, session: Session =
         session.commit()
         audit_log(session, user, "Ended Consultation", f"Consultation #{consult_id}", "Session Management", consult_id)
     
-    return RedirectResponse("/dashboard")
+    return RedirectResponse("/dashboard", status_code=303)
 
 @router.get("/doctor/toggle_status")
 async def toggle_status(request: Request, session: Session = Depends(get_db)):
@@ -576,22 +579,40 @@ manager = ConnectionManager()
 
 @router.websocket("/ws/{consult_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, consult_id: int, user_id: int):
+    """WebSocket endpoint for chat, signaling, and live transcript."""
     await manager.connect(websocket, consult_id)
     try:
         while True:
             data = await websocket.receive_text()
-            # Try to parse as JSON for WebRTC signaling
             try:
                 msg_json = json.loads(data)
-                if "type" in msg_json and msg_json["type"] in ["offer", "answer", "candidate"]:
-                    # This is a WebRTC signaling message, broadcast to OTHER peer
+                msg_type = msg_json.get("type")
+
+                # WebRTC signaling should not echo back to sender
+                if msg_type in {"offer", "answer", "candidate"}:
                     await manager.broadcast_except(data, consult_id, websocket)
-                else:
-                    # Normal chat message (JSON formatted)
-                    await manager.broadcast(data, consult_id)
+                    continue
+
+                # Structured chat message
+                if msg_type == "chat":
+                    # Ensure sender metadata is present
+                    msg_json.setdefault("user_id", user_id)
+                    msg_json.setdefault("timestamp", datetime.utcnow().isoformat())
+                    await manager.broadcast(json.dumps(msg_json), consult_id)
+                    continue
+
+                # Unknown structured message – broadcast as-is
+                await manager.broadcast(data, consult_id)
+
             except json.JSONDecodeError:
-                # Plain text fallback
-                await manager.broadcast(f"User {user_id}: {data}", consult_id)
+                # Plain text fallback -> wrap into chat payload
+                chat_payload = json.dumps({
+                    "type": "chat",
+                    "user_id": user_id,
+                    "text": data,
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+                await manager.broadcast(chat_payload, consult_id)
     except WebSocketDisconnect:
         manager.disconnect(websocket, consult_id)
 

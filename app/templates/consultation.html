@@ -431,7 +431,9 @@
     "consultId": "{{ consultation.id }}",
     "userId": "{{ user.id }}",
     "userRole": "{{ user.role }}",
-    "sessionStartTimestamp": {% if session_start_timestamp %}{{ session_start_timestamp }}{% else %}null{% endif %}
+    "sessionStartTimestamp": {% if session_start_timestamp %}{{ session_start_timestamp }}{% else %}null{% endif %},
+    "currentDoctor": {% if current_doctor %}{"id": "{{ current_doctor.id }}", "name": {{ current_doctor.full_name|tojson }} }{% else %}null{% endif %},
+    "currentPatient": {% if current_patient %}{"id": "{{ current_patient.id }}", "name": {{ current_patient.full_name|tojson }} }{% else %}null{% endif %}
 }
 </script>
 <script>
@@ -441,6 +443,21 @@
     const userId = consultationData.userId;
     const userRole = consultationData.userRole;
     const sessionStartTimestamp = consultationData.sessionStartTimestamp || Date.now();
+
+    // Map user IDs to real names for chat/transcript labels
+    const userDirectory = {};
+    if (consultationData.currentDoctor?.id && consultationData.currentDoctor?.name) {
+        userDirectory[String(consultationData.currentDoctor.id)] = consultationData.currentDoctor.name;
+    }
+    if (consultationData.currentPatient?.id && consultationData.currentPatient?.name) {
+        userDirectory[String(consultationData.currentPatient.id)] = consultationData.currentPatient.name;
+    }
+
+    function getDisplayName(id) {
+        if (id === userId) return "Me";
+        if (id == null) return "User";
+        return userDirectory[String(id)] || `User ${id}`;
+    }
     // Use wss:// for HTTPS, ws:// for HTTP
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = wsProtocol + "//" + window.location.host + "/ws/" + consultId + "/" + userId;
@@ -498,6 +515,12 @@
     let peerConnection;
     let localStream;
 
+    const buildChatPayload = (text) => JSON.stringify({
+        type: "chat",
+        user_id: userId,
+        text: text.trim()
+    });
+
     // --- WebSocket Handling ---
     if (ws) {
         ws.onmessage = async function(event) {
@@ -506,17 +529,22 @@
 
                 if (msg.type === "transcript") {
                     handleTranscript(msg);
+                    return;
                 }
-                else if (msg.type === "offer") { await handleOffer(msg); }
-                else if (msg.type === "answer") { await handleAnswer(msg); }
-                else if (msg.type === "candidate") { await handleCandidate(msg); }
-                else {
-                    // Assume chat message
-                    addChatMessage("User", JSON.stringify(msg));
+                if (msg.type === "chat") {
+                    const senderLabel = getDisplayName(msg.user_id);
+                    addChatMessage(senderLabel, msg.text || "");
+                    return;
                 }
+                if (msg.type === "offer") { await handleOffer(msg); return; }
+                if (msg.type === "answer") { await handleAnswer(msg); return; }
+                if (msg.type === "candidate") { await handleCandidate(msg); return; }
+
+                // Unknown structured message -> show raw
+                addChatMessage("System", JSON.stringify(msg));
             } catch (e) {
                 // Plain text fallback (chat)
-                addChatMessage("", event.data);
+                addChatMessage("System", event.data);
             }
         };
     }
@@ -544,7 +572,8 @@
 
         const div = document.createElement('div');
         div.className = 'mb-2 p-2 bg-white border rounded shadow-sm';
-        div.innerHTML = `<small class="d-block text-primary fw-bold mb-1">Speaker</small>${msg.text}`;
+        const speakerLabel = getDisplayName(msg.user_id);
+        div.innerHTML = `<small class="d-block text-primary fw-bold mb-1">${speakerLabel}</small>${msg.text}`;
         transcriptBox.appendChild(div);
         transcriptBox.scrollTop = transcriptBox.scrollHeight;
 
@@ -579,8 +608,7 @@
         msgInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && this.value.trim()) {
                 if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(this.value);
-                    addChatMessage("Me", this.value);
+                    ws.send(buildChatPayload(this.value));
                     this.value = '';
                 } else {
                     if (typeof showToast !== 'undefined') {
